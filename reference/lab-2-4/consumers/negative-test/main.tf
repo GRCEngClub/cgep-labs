@@ -19,7 +19,7 @@ module "broken_bucket" {
   gcp_project        = var.gcp_project
   project_label      = "cgep-lab"
   environment        = "prod"
-  retention_days     = 30   # FAILS: prod requires >= 365
+  retention_days     = 30 # FAILS: prod requires >= 365
   bucket_name_suffix = "should-never-exist"
 }
 

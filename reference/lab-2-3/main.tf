@@ -22,10 +22,10 @@ provider "aws" {
   # taggable resource by default. Removes the chance of forgetting them.
   default_tags {
     tags = {
-      Project          = var.project_name
-      Environment      = var.environment
-      ManagedBy        = "terraform"
-      ComplianceScope  = "cge-p-lab"
+      Project         = var.project_name
+      Environment     = var.environment
+      ManagedBy       = "terraform"
+      ComplianceScope = "cge-p-lab"
     }
   }
 }

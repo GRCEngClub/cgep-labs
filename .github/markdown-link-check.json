@@ -1,0 +1,12 @@
+{
+  "ignorePatterns": [
+    { "pattern": "^https://cert\\.grcengclub\\.com" },
+    { "pattern": "^https://oauth2\\.sigstore\\.dev" },
+    { "pattern": "^s3://" }
+  ],
+  "timeout": "10s",
+  "retryOn429": true,
+  "retryCount": 3,
+  "fallbackRetryDelay": "30s",
+  "aliveStatusCodes": [200, 206, 301, 302, 308, 403, 429]
+}

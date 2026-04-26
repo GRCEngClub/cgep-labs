@@ -1,0 +1,126 @@
+# CI for cgep-labs.
+# Runs on every PR + push to main. Three jobs in parallel:
+#   - opa-test: every Rego policy under reference/ has its tests run.
+#   - terraform: `terraform fmt -check` and `terraform validate -backend=false`
+#                across every reference workspace.
+#   - oscal:    every OSCAL JSON under reference/ is validated by trestle.
+#
+# These are the same checks a learner would run locally. If something here
+# fails, the lab is broken.
+
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  opa-test:
+    name: opa test (Rego policies)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OPA
+        run: |
+          curl -fsSL https://github.com/open-policy-agent/opa/releases/download/v0.65.0/opa_linux_amd64_static \
+            -o /usr/local/bin/opa
+          chmod +x /usr/local/bin/opa
+          opa version
+
+      - name: Run opa test against every policies/ dir
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r dir; do
+            echo "=== $dir ==="
+            if ! opa test -v "$dir"; then
+              fail=1
+            fi
+          done < <(find reference -type d -name policies | sort -u)
+          exit $fail
+
+  terraform:
+    name: terraform fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+
+      - name: terraform fmt -check (every .tf)
+        run: |
+          if ! terraform fmt -check -recursive reference/; then
+            echo "::error::Run 'terraform fmt -recursive reference/' to fix."
+            exit 1
+          fi
+
+      - name: terraform validate (every workspace with .tf at the root or terraform/ subdir)
+        run: |
+          set -euo pipefail
+          fail=0
+          # A workspace is any directory directly containing one or more *.tf files.
+          # We exclude .terraform/ to avoid validating provider mirrors.
+          while IFS= read -r dir; do
+            echo "=== $dir ==="
+            (
+              cd "$dir"
+              terraform init -backend=false -input=false -no-color > /tmp/init.log 2>&1 || {
+                echo "::error::init failed in $dir"
+                cat /tmp/init.log
+                exit 1
+              }
+              terraform validate -no-color
+            ) || fail=1
+          done < <(find reference -type f -name '*.tf' -not -path '*/.terraform/*' \
+                   -exec dirname {} \; | sort -u)
+          exit $fail
+
+  oscal:
+    name: trestle validate (OSCAL)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install compliance-trestle
+
+      - name: trestle validate every OSCAL JSON
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            echo "=== $f ==="
+            if ! trestle validate -f "$f"; then
+              fail=1
+            fi
+          done < <(find reference -path '*/component-definitions/*' -name '*.json' \
+                       -o -path '*/profiles/*' -name '*.json' \
+                       -o -path '*/catalogs/*' -name '*.json' | sort -u)
+          exit $fail
+
+  markdown-links:
+    name: markdown link check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: gaurav-nelson/github-action-markdown-link-check@v1
+        with:
+          use-quiet-mode: 'yes'
+          use-verbose-mode: 'yes'
+          config-file: '.github/markdown-link-check.json'
+          folder-path: 'guides,'
+          file-path: 'README.md'

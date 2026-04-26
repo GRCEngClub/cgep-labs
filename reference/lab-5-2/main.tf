@@ -61,9 +61,9 @@ data "aws_iam_policy_document" "trail" {
     sid    = "AWSCloudTrailAclCheck"
     effect = "Allow"
     principals {
-    type = "Service"
-    identifiers = ["cloudtrail.amazonaws.com"]
-  }
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
     actions   = ["s3:GetBucketAcl"]
     resources = [aws_s3_bucket.trail.arn]
     condition {
@@ -76,9 +76,9 @@ data "aws_iam_policy_document" "trail" {
     sid    = "AWSCloudTrailWrite"
     effect = "Allow"
     principals {
-    type = "Service"
-    identifiers = ["cloudtrail.amazonaws.com"]
-  }
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
     actions   = ["s3:PutObject"]
     resources = ["${aws_s3_bucket.trail.arn}/AWSLogs/${data.aws_caller_identity.current.account_id}/*"]
     condition {
@@ -104,7 +104,7 @@ resource "aws_cloudtrail" "mgmt" {
   s3_bucket_name                = aws_s3_bucket.trail.id
   is_multi_region_trail         = true
   include_global_service_events = true
-  enable_log_file_validation    = true   # AU-10: integrity of audit records
+  enable_log_file_validation    = true # AU-10: integrity of audit records
 
   depends_on = [aws_s3_bucket_policy.trail]
 }
@@ -125,9 +125,9 @@ resource "aws_securityhub_standards_subscription" "fsbp" {
 
 # ----- Outputs --------------------------------------------------------------
 
-output "trail_name"   { value = aws_cloudtrail.mgmt.name }
+output "trail_name" { value = aws_cloudtrail.mgmt.name }
 output "trail_bucket" { value = aws_s3_bucket.trail.id }
-output "hub_arn"      { value = aws_securityhub_account.this.arn }
+output "hub_arn" { value = aws_securityhub_account.this.arn }
 
 # # ----- AWS Config (CM-2 / CM-6 / CM-8) --------------------------------------
 # # Records resource configuration changes. Security Hub controls depend on it
