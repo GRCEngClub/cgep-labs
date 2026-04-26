@@ -15,17 +15,17 @@ The guides are the lab. The reference workspaces are the same code in deployable
 
 | # | Lab | Cloud |
 |---|---|---|
-| 2.3 | First Compliant Resource | AWS |
-| 2.4 | Terraform Modules for Compliance | GCP |
-| 2.5 | IaC as Compliance Evidence | AWS |
-| 3.3 | Writing Compliance Policies in Rego | GCP |
-| 3.4 | Integrating PaC with Terraform (Conftest) | AWS |
-| 4.3 | Building a GRC Evidence Pipeline | AWS + GitHub Actions |
-| 4.4 | Evidence Management & Chain of Custody | AWS |
-| 5.2 | AWS Security Services Baseline | AWS |
-| 5.4 | GCP Security Services Baseline | GCP |
-| 6.1 | Introduction to OSCAL | Cloud-agnostic |
-| 7.1 | Capstone brief | AWS |
+| [2.3](guides/02_03_first_compliant_resource.md) | First Compliant Resource | AWS |
+| [2.4](guides/02_04_terraform_modules_for_compliance.md) | Terraform Modules for Compliance | GCP |
+| [2.5](guides/02_05_iac_as_compliance_evidence.md) | IaC as Compliance Evidence | AWS |
+| [3.3](guides/03_03_writing_compliance_policies_rego.md) | Writing Compliance Policies in Rego | GCP |
+| [3.4](guides/03_04_integrating_pac_with_terraform.md) | Integrating PaC with Terraform (Conftest) | AWS |
+| [4.3](guides/04_03_grc_evidence_pipeline.md) | Building a GRC Evidence Pipeline | AWS + GitHub Actions |
+| [4.4](guides/04_04_evidence_chain_of_custody.md) | Evidence Management & Chain of Custody | AWS |
+| [5.2](guides/05_02_aws_security_services.md) | AWS Security Services Baseline | AWS |
+| [5.4](guides/05_04_gcp_security_services.md) | GCP Security Services Baseline | GCP |
+| [6.1](guides/06_01_introduction_to_oscal.md) | Introduction to OSCAL | Cloud-agnostic |
+| [7.1](guides/07_01_capstone_brief.md) | Capstone Brief | AWS |
 
 The labs alternate between AWS and GCP on purpose. The compliance-by-default pattern is cloud-agnostic; doing it in two providers makes that obvious.
 
@@ -37,7 +37,9 @@ The labs alternate between AWS and GCP on purpose. The compliance-by-default pat
 
 ## Running a reference workspace
 
-Each `reference/lab-X-Y/` is a self-contained Terraform workspace. The published guide tells the full story. This directory is the code.
+Each `reference/lab-X-Y/` is a self-contained Terraform / Rego / shell workspace. The published guide tells the full story; this directory is the code.
+
+For Terraform-touching labs:
 
 ```bash
 cd reference/lab-2-3
@@ -45,11 +47,29 @@ eval "$(aws configure export-credentials --profile <your-sandbox> --format env)"
 terraform init
 terraform plan -out=tfplan
 terraform apply -auto-approve tfplan
-# verify with the commands in guides/02_03_first_compliant_resource.md
+# verify with the commands in the guide
 terraform destroy -auto-approve
 ```
 
+For Rego-only labs (3.3, 3.4):
+
+```bash
+cd reference/lab-3-3
+opa test -v policies/
+```
+
 Always tear down at the end of the session. Reference workspaces are not meant to live deployed.
+
+## Required tooling
+
+- `terraform >= 1.6`
+- `opa >= 0.60`
+- `conftest >= 0.50` (Lab 3.4 onwards)
+- `cosign >= 2.0` (Lab 4.4)
+- `tfsec` (Lab 4.3)
+- `compliance-trestle` Python package (Lab 6.1)
+- `aws` CLI v2 with a working SSO or access-key profile
+- `gcloud` CLI for GCP labs
 
 ## Contributing
 
@@ -59,7 +79,7 @@ PRs welcome for:
 - Bugs in reference workspaces.
 - Clarity edits to lab guides.
 
-Out of scope for now: scope expansion, alternate framework framings beyond NIST 800-53 / HIPAA / SOC 2 / CMMC L2.
+Out of scope: scope expansion, alternate framework framings beyond NIST 800-53 / HIPAA / SOC 2 / CMMC L2.
 
 ## License
 
