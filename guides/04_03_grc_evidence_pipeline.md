@@ -37,7 +37,7 @@ Lab 4.4 adds Cosign signing and uploads the bundle to the Lab 2.5 vault.
 
 ## Step-by-step walkthrough
 
-### 5.1 Set up GitHub OIDC trust with AWS
+### Step 1 Set up GitHub OIDC trust with AWS
 
 A small Terraform module creates the OIDC provider and a read-only role scoped to your repo.
 
@@ -104,7 +104,7 @@ terraform apply -var=github_org=YourOrg -var=github_repo=YourRepo
 
 The `StringLike` on `sub` keeps this role bound to one specific repository. Don't loosen it. A role trusted by `repo:*:*` is trusted by every public repo on GitHub.
 
-### 5.2 Add the role ARN as a repo variable
+### Step 2 Add the role ARN as a repo variable
 
 ```bash
 gh variable set AWS_ROLE_ARN \
@@ -112,7 +112,7 @@ gh variable set AWS_ROLE_ARN \
   --repo YourOrg/YourRepo
 ```
 
-### 5.3 Write the workflow
+### Step 3 Write the workflow
 
 ```yaml
 # .github/workflows/grc-gate.yml
@@ -230,7 +230,7 @@ A few specific choices worth understanding:
 - **`|| true`** after the conftest and tfsec calls. The tools exit non-zero on findings; we want the JSON output regardless. The pass/fail decision is made by the python3 inline checks that follow.
 - **Pinned versions** on every action. Floating tags drift. Pin them.
 
-### 5.4 Open a PR and watch it run
+### Step 4 Open a PR and watch it run
 
 ```bash
 git checkout -b add-grc-gate
@@ -256,7 +256,7 @@ tfsec high+critical: 12
 
 Both gates fired. The starter has eight named gaps, so this is the expected outcome. The evidence artifact `grc-evidence-<run-id>` is attached to the run with `plan.json`, `conftest-results.json`, `tfsec.sarif`, and the human-readable `plan.txt`.
 
-### 5.5 The two-PR demonstration
+### Step 5 The two-PR demonstration
 
 The capstone wants both a green and a red PR in your repo's history. To produce them:
 
@@ -265,7 +265,7 @@ The capstone wants both a green and a red PR in your repo's history. To produce 
 
 Both runs leave evidence artifacts in the workflow history. Both URLs go in your capstone write-up.
 
-### 5.6 The YAML file is itself evidence
+### Takeaway: The YAML file is itself evidence
 
 Every line in `.github/workflows/grc-gate.yml` is a control statement.
 

@@ -43,7 +43,7 @@ One primary bucket holds your data. A separate log bucket receives S3 server acc
 
 ## Step-by-step walkthrough
 
-### 5.1 Create the project structure
+### Step 1 Create the project structure
 
 ```bash
 mkdir -p terraform/primitives/compliant-s3 && cd terraform/primitives/compliant-s3
@@ -52,7 +52,7 @@ touch main.tf variables.tf outputs.tf README.md
 
 This is the directory shape every lab will reuse. By Ch 7 your capstone repo will have a dozen of these.
 
-### 5.2 Write the base bucket + tags
+### Step 2 Write the base bucket + tags
 
 Open `main.tf` and start with the provider configuration. The `default_tags` block makes the four required compliance tags non-optional, every taggable resource you create from this provider gets them automatically.
 
@@ -125,7 +125,7 @@ variable "bucket_suffix" {
 }
 ```
 
-### 5.3 Add encryption, versioning, public access block
+### Step 3 Add encryption, versioning, public access block
 
 Three resources, three controls.
 
@@ -173,7 +173,7 @@ resource "aws_s3_bucket_public_access_block" "primary" {
 
 All four flags must be `true`. Three is not enough. AWS treats them as independent doors.
 
-### 5.4 Add the log bucket and wire up access logging
+### Step 4 Add the log bucket and wire up access logging
 
 The log bucket needs its own encryption and public-access-block, plus an ACL allowing the S3 log delivery group to write into it. Define it before the `aws_s3_bucket_logging` that points at it.
 
@@ -239,7 +239,7 @@ output "encryption_algorithm" {
 
 > **Why the `one(...)` expression:** Terraform represents the `rule` block of `aws_s3_bucket_server_side_encryption_configuration` as a *set*, not a list. Sets are not index-addressable. The `for` expression flattens the single rule into a list, then `one()` extracts the lone element, failing loudly if there's ever more than one. This is the kind of thing that catches you off-guard the first time and never again.
 
-### 5.5 terraform init / plan / apply
+### Step 5 terraform init / plan / apply
 
 If you're using AWS SSO, export your credentials so Terraform's AWS provider can use them:
 
@@ -271,7 +271,7 @@ log_bucket_arn = "arn:aws:s3:::cgep-lab-dev-logs-XXXXXXXX"
 
 Eleven resources, four outputs. Your bucket suffix will differ.
 
-### 5.6 Capture evidence with `terraform show -json`
+### Step 6 Capture evidence with `terraform show -json`
 
 ```bash
 mkdir -p evidence

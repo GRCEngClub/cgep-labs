@@ -40,11 +40,11 @@ The capture script reads from your Lab 2.3 workspace, hashes everything, tars it
 
 ## Step-by-step walkthrough
 
-### 5.1 Why code is evidence
+### Concept: Why code is evidence
 
 A screenshot of an AWS console says "I once saw this." A Terraform plan committed to git, reviewed in a pull request, applied in CI, and stored in a vault that refuses deletion says "this is what was deployed, who reviewed it, when, and the artifact is unchanged since." Three properties auditors want: integrity, attribution, reproducibility. Code-as-evidence delivers all three. Screenshots deliver none.
 
-### 5.2 Build the evidence vault
+### Step 1 Build the evidence vault
 
 Object Lock has one critical constraint: it must be enabled at bucket creation. You cannot retrofit it. Start fresh.
 
@@ -160,7 +160,7 @@ variable "retention_days" {
 
 > **GOVERNANCE vs COMPLIANCE.** GOVERNANCE retention can be bypassed by a privileged caller using `--bypass-governance-retention`. COMPLIANCE cannot be bypassed by anyone, including root, until the retention window expires. Use GOVERNANCE for lab work so you can clean up. Use COMPLIANCE for real evidence. The script and the rest of the pattern are identical either way.
 
-### 5.3 Write `capture-evidence.sh`
+### Step 2 Write `capture-evidence.sh`
 
 A single bash script. Reads the workspace, builds a manifest, uploads, prints a JSON receipt to stdout that downstream pipelines can pipe.
 
@@ -241,7 +241,7 @@ printf '{"run_id":"%s","vault":"%s","key":"%s","version_id":"%s","captured_at_ut
 
 `set -euo pipefail` plus the `trap` handles partial-failure cleanup. The single-line JSON receipt at the end is what your CI pipeline captures and stores.
 
-### 5.4 Run it against Lab 2.3's workspace
+### Step 3 Run it against Lab 2.3's workspace
 
 ```bash
 chmod +x scripts/capture-evidence.sh
@@ -266,7 +266,7 @@ Receipt:
 
 The VersionId is the durable handle. Save it. Anything that points at this evidence in the future (your OSCAL component's evidence URI, for example) uses `s3://VAULT/KEY?versionId=...`.
 
-### 5.5 Verify in S3
+### Step 4 Verify in S3
 
 ```bash
 aws s3api get-object-retention \
@@ -286,7 +286,7 @@ Expected:
 
 The retention date is set by the bucket's default rule, applied at upload. You did not have to set it explicitly.
 
-### 5.6 The destructive test
+### Step 5 The destructive test
 
 This is the lesson. Try to delete the object you just uploaded.
 
@@ -307,7 +307,7 @@ Access Denied because object protected by object lock.
 
 That message is the proof of immutability. A pipeline that uploads here, and an auditor who reads from here, both rely on this rejection. The lesson is not that S3 has a feature called Object Lock; the lesson is that your evidence is now resistant to silent tampering by an admin who would rather the evidence not exist.
 
-### 5.7 Optional: sign the bundle with Cosign
+### Step 6 Optional: sign the bundle with Cosign
 
 Cosign keyless signing uses Sigstore's public Fulcio CA. From a laptop you authenticate via OIDC. From CI (Lab 4.4) the GitHub OIDC token flows automatically.
 

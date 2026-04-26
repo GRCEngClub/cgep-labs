@@ -46,11 +46,11 @@ If your project sits inside an Organization and you want to apply Org Policy at 
 
 ## Step-by-step walkthrough
 
-### 5.1 Why identity-first
+### Concept: Why identity-first
 
 GCP's bet is that the smallest unit of security is the principal, not the resource. Org Policy enforces at the API call: a bucket creation attempt that violates `uniformBucketLevelAccess` is REJECTED, not flagged. WIF replaces "create a service account, download a JSON key, paste into GitHub Secrets, hope nobody leaks it" with "the GitHub Actions runtime presents an OIDC token, GCP swaps it for a short-lived access token, the token expires automatically." The two together make whole categories of attack uneconomical.
 
-### 5.2 Org Policy at project scope
+### Step 1 Org Policy at project scope
 
 ```hcl
 resource "google_org_policy_policy" "uniform_bucket_access" {
@@ -83,7 +83,7 @@ resource "google_org_policy_policy" "require_oslogin" {
 
 `enforce = "TRUE"` is rejection at the API. To audit-only-without-rejection, omit the rules block; the policy is then in "inherited" state and only visible in the policy listing.
 
-### 5.3 Test the enforcement
+### Step 2 Test the enforcement
 
 After apply, intentionally try to violate one:
 
@@ -102,7 +102,7 @@ constraint iam.disableServiceAccountKeyCreation
 
 This is the lesson. The control didn't fire after the fact in a Security Hub finding three hours later. The action didn't happen. That's defense-in-depth's strongest layer.
 
-### 5.4 Workload Identity Federation
+### Step 3 Workload Identity Federation
 
 Pool, provider, service account, IAM binding. The `attribute_condition` is critical. Without it, ANY GitHub repo on the public internet can use this provider to impersonate your service account.
 
@@ -166,7 +166,7 @@ steps:
 
 The token is minted at job start, expires after one hour, never lands on disk. Same security posture as the AWS OIDC pattern in Lab 4.3, different cloud.
 
-### 5.5 Enable Data Access audit logs
+### Step 4 Enable Data Access audit logs
 
 Off by default. This is the most-cited GCP audit finding because nobody turns them on.
 
@@ -205,7 +205,7 @@ gcloud logging read 'protoPayload.serviceName="storage.googleapis.com" AND \
   protoPayload.methodName=~"storage.objects.list"' --limit 5 --format=json
 ```
 
-### 5.6 Security Command Center
+### Step 5 Security Command Center
 
 If your project sits in an Organization with Security Command Center enabled, findings flow in automatically. SCC Standard is free at the org level; Premium is enterprise-priced and not used here. The lab does not provision SCC because it requires org admin; if you have it, dump findings as evidence:
 
