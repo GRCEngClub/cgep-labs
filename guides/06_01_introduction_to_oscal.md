@@ -42,7 +42,7 @@ OSCAL is NIST's machine-readable format for security controls, profiles, compone
 
 ## Step-by-step walkthrough
 
-### 5.1 The five OSCAL models
+### Concept: The five OSCAL models
 
 | Model | What it describes | Built in this lab |
 |---|---|---|
@@ -52,7 +52,7 @@ OSCAL is NIST's machine-readable format for security controls, profiles, compone
 | System Security Plan (SSP) | A whole system's controls + components. | Stretch goal for capstone. |
 | Assessment Plan / Results | What the auditor planned, what the auditor found. | Out of scope. |
 
-### 5.2 Initialize a trestle workspace
+### Step 1 Initialize a trestle workspace
 
 ```bash
 pip install compliance-trestle
@@ -62,7 +62,7 @@ trestle init
 
 You'll get an OSCAL-shaped directory: `catalogs/`, `profiles/`, `component-definitions/`, etc.
 
-### 5.3 Create the component definition skeleton
+### Step 2 Create the component definition skeleton
 
 ```bash
 trestle create -t component-definition -o compliant-s3-v1 -x json
@@ -70,7 +70,7 @@ trestle create -t component-definition -o compliant-s3-v1 -x json
 
 Trestle generates a minimal valid skeleton. Open `component-definitions/compliant-s3-v1/component-definition.json` and replace it with the real document.
 
-### 5.4 The component definition
+### Step 3 The component definition
 
 ```json
 {
@@ -134,7 +134,7 @@ Add similar `implemented-requirements` for `ac-3`, `au-3`, and `cm-6`. The full 
 
 > **Generate UUIDs the right way.** OSCAL requires v4 UUIDs (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where `y` is 8/9/a/b). Don't hand-write them. Run `python3 -c "import uuid; print(uuid.uuid4())"` per UUID. `trestle validate` rejects the wrong format with a regex error; this catches you the first time you try.
 
-### 5.5 Validate
+### Step 4 Validate
 
 ```bash
 trestle validate -f component-definitions/compliant-s3-v1/component-definition.json
@@ -147,7 +147,7 @@ VALID: Model .../component-definition.json passed the Validator
 to confirm the model passes all registered validation tests.
 ```
 
-### 5.6 The Profile
+### Step 5 The Profile
 
 A profile selects which controls from the catalog this component covers.
 
@@ -186,7 +186,7 @@ Validate:
 trestle validate -f profiles/cge-p-minimum/profile.json
 ```
 
-### 5.7 Resolve the profile against the catalog
+### Step 6 Resolve the profile against the catalog
 
 ```bash
 trestle profile-resolve -n cge-p-minimum -o cge-p-minimum-resolved
@@ -194,7 +194,7 @@ trestle profile-resolve -n cge-p-minimum -o cge-p-minimum-resolved
 
 Trestle fetches the NIST catalog, applies your selection, and writes a resolved profile, the flat list of controls your component is responsible for. This is what an SSP would import.
 
-### 5.8 Demonstrate the traversal
+### Step 7 Demonstrate the traversal
 
 Pick `sc-28` in your component definition. Follow the `links[rel=evidence].href` to the vault. Run Lab 4.4's `verify-evidence.sh`:
 

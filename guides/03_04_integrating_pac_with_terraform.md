@@ -32,7 +32,7 @@ You wrote three Rego policies in Lab 3.3 against GCP fixtures. This lab does two
 
 ## Step-by-step walkthrough
 
-### 5.1 Carry the Lab 3.3 library forward, run its tests
+### Step 1 Carry the Lab 3.3 library forward, run its tests
 
 ```bash
 cp -r ../lab-3-3/policies ./policies
@@ -41,7 +41,7 @@ opa test -v policies/    # 8/8 PASS
 
 Sanity check the library still works in this workspace before extending it.
 
-### 5.2 Generate plan.json from Lab 2.3
+### Step 2 Generate plan.json from Lab 2.3
 
 ```bash
 cd ../lab-2-3
@@ -53,7 +53,7 @@ terraform show -json tfplan > plan.json
 
 Copy `plan.json` into the Conftest workspace, or point Conftest at it directly.
 
-### 5.3 The cross-cloud lesson
+### Step 3 The cross-cloud lesson
 
 Run the GCP policies against the AWS plan:
 
@@ -67,7 +67,7 @@ The first two pass with zero coverage. They check `google_storage_bucket` and `g
 
 The lesson: a control ID is portable, but a Rego rule that hardcodes `resource.type == "google_storage_bucket"` is not. Either you generalize the rule or you add per-cloud variants. Adding variants keeps each rule readable; generalizing makes one rule that handles every type. We add variants here.
 
-### 5.4 Add the AWS variant of SC-28
+### Step 4 Add the AWS variant of SC-28
 
 ```rego
 # policies/sc28_encryption_aws.rego
@@ -112,7 +112,7 @@ references_bucket(ref, bucket_addr) if ref == sprintf("%s.bucket", [bucket_addr]
 
 > **Why match by reference, not by value.** At plan time, the bucket name is "(known after apply)" because the random_id suffix isn't generated yet. Both `aws_s3_bucket.values.bucket` and the encryption resource's `values.bucket` are `null` in the JSON. Use `configuration.root_module.resources[].expressions.bucket.references` instead. Each reference is a string like `"aws_s3_bucket.primary.id"` that Terraform resolves at apply.
 
-### 5.5 Add the AWS variant of AC-3
+### Step 5 Add the AWS variant of AC-3
 
 The AWS variant is more discriminating than the GCP one: it requires a public-access-block resource AND that all four flags are set true.
 
@@ -171,7 +171,7 @@ pab_planned_values(addr) := values if {
 }
 ```
 
-### 5.6 Add the AWS variant of CM-6
+### Step 6 Add the AWS variant of CM-6
 
 The GCP rule used `labels`. AWS uses `tags`. With provider `default_tags` enabled, the merged tag set lives in `tags_all`.
 
@@ -232,7 +232,7 @@ tag_keys(resource) := set() if {
 sort_array(s) := sorted if { sorted := sort([x | some x in s]) }
 ```
 
-### 5.7 Run the gate against the compliant plan
+### Step 7 Run the gate against the compliant plan
 
 ```bash
 for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws ; do
@@ -254,7 +254,7 @@ Expected:
 
 Lab 2.3's plan now has full AWS coverage from your policy library.
 
-### 5.8 Break it and watch the gate fire
+### Step 8 Break it and watch the gate fire
 
 Copy the Lab 2.3 workspace, remove the primary bucket's encryption configuration block, regenerate the plan, run Conftest:
 
@@ -276,7 +276,7 @@ FAIL - broken/plan.json - compliance.sc28_aws - [SC-28] aws_s3_bucket.primary: a
 
 The exit code is non-zero. The deny message names the resource, the control, and the fix. A developer reading the failed PR knows exactly what to do.
 
-### 5.9 The wrapper script
+### Step 9 The wrapper script
 
 The CI workflow in Lab 4.3 calls a single script. Build it now.
 

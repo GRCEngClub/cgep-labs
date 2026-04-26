@@ -31,13 +31,13 @@ Every deny message includes the resource address AND the NIST control ID. The de
 
 ## Step-by-step walkthrough
 
-### 5.1 Project structure
+### Step 1 Project structure
 
 ```bash
 mkdir -p policies/tests terraform fixtures
 ```
 
-### 5.2 The test bed
+### Step 2 The test bed
 
 A small Terraform fixture with both compliant and non-compliant resources gives the policy suite something concrete to flag.
 
@@ -115,7 +115,7 @@ terraform show -json tfplan > plan.json
 
 You don't have to apply. The policies operate on `plan.json`.
 
-### 5.3 SC-28: Encryption at Rest
+### Step 3 SC-28: Encryption at Rest
 
 ```rego
 # policies/sc28_encryption.rego
@@ -164,7 +164,7 @@ empty_kms_key(enc) if enc.default_kms_key_name == null
 
 > **Why `has_cmek` checks the block, not the value.** At plan time, the KMS key resource ID is "(known after apply)" because Terraform hasn't created the key yet. The plan JSON omits unknown values entirely. We accept any non-empty `encryption` block as "configured", and only fail when the block is missing or holds an empty/null key name. This is the correct policy semantics: the developer wired CMEK, the value resolves at apply.
 
-### 5.4 SC-28 tests
+### Step 4 SC-28 tests
 
 ```rego
 # policies/tests/sc28_encryption_test.rego
@@ -203,7 +203,7 @@ opa test -v policies/
 
 Both tests pass. Move on.
 
-### 5.5 AC-3: No public access
+### Step 5 AC-3: No public access
 
 Two rule sets in one file: buckets and firewalls.
 
@@ -272,7 +272,7 @@ deny contains msg if {
 }
 ```
 
-### 5.6 AC-3 tests
+### Step 6 AC-3 tests
 
 ```rego
 # policies/tests/ac3_no_public_test.rego
@@ -307,7 +307,7 @@ test_open_management_port_fails if {
 }
 ```
 
-### 5.7 CM-6: Required labels
+### Step 7 CM-6: Required labels
 
 This one uses set subtraction. Required labels are a set; the resource's labels are a set; the difference is what's missing.
 
@@ -384,7 +384,7 @@ test_partial_fails    if { some msg in cm6.deny with input as missing;   contain
 test_no_labels_fail   if { some msg in cm6.deny with input as no_labels; contains(msg, "CM-6") }
 ```
 
-### 5.8 Run the full library against the real plan
+### Step 8 Run the full library against the real plan
 
 ```bash
 opa test -v policies/
@@ -414,7 +414,7 @@ Expected:
 
 Each non-compliant resource is flagged exactly once by the right control. The good bucket is quiet.
 
-### 5.9 Fix the broken Terraform, re-eval
+### Step 9 Fix the broken Terraform, re-eval
 
 Add the missing pieces to your fixture, regenerate `plan.json`, run the same evals. Every deny set is empty.
 

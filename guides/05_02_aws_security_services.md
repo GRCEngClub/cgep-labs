@@ -41,11 +41,11 @@ If you destroy within an hour of applying, expect under $1 charged. Leaving Secu
 
 ## Step-by-step walkthrough
 
-### 5.1 Why baseline services beat point tools
+### Concept: Why baseline services beat point tools
 
 Every cloud security vendor will sell you a slick console. CloudTrail, Config, and Security Hub are inside the platform you're already paying for, mapped to the same NIST controls auditors ask about, and producing JSON you can pipe into your existing pipeline. They aren't pretty. They're durable. Pick the durable one.
 
-### 5.2 CloudTrail
+### Step 1 CloudTrail
 
 Multi-region, with log-file validation on (AU-10). The bucket policy must scope the `aws:SourceArn` condition to the trail you're about to create.
 
@@ -125,7 +125,7 @@ resource "aws_cloudtrail" "mgmt" {
 
 `enable_log_file_validation = true` makes CloudTrail emit a digest file every hour signed by an AWS-managed key. Your auditor can use it to detect tampering. That's AU-10 (integrity of audit information) for free.
 
-### 5.3 Security Hub
+### Step 2 Security Hub
 
 Two standards subscribed: NIST 800-53 Rev 5 and AWS Foundational Security Best Practices. Both are free to subscribe to; you pay per security check.
 
@@ -149,7 +149,7 @@ If Security Hub is already enabled in the account from a previous experiment or 
 terraform import aws_securityhub_account.this <ACCOUNT_ID>
 ```
 
-### 5.4 AWS Config (may be SCP-blocked)
+### Step 3 AWS Config (may be SCP-blocked)
 
 The reference Terraform includes a Config recorder + delivery channel + IAM role + bucket. Org-managed accounts often have an SCP like:
 
@@ -170,7 +170,7 @@ then Config is centrally managed in your org and the lab's Terraform should be c
 
 That finding is its own evidence: your account is reporting on its own gap.
 
-### 5.5 Apply and wait
+### Step 4 Apply and wait
 
 ```bash
 eval "$(aws configure export-credentials --profile <your-sandbox> --format env)"
@@ -180,7 +180,7 @@ terraform apply -auto-approve
 
 Wait 10 to 20 minutes. Security Hub findings populate slowly on first deploy.
 
-### 5.6 Verify
+### Step 5 Verify
 
 ```bash
 aws cloudtrail get-trail-status --name cgep-lab-mgmt --region us-east-1 \
@@ -208,7 +208,7 @@ Reference run output (after Security Hub had been enabled for a few minutes):
 
 In a freshly-deployed account, expect anywhere from 1 to ~50 findings within an hour. The first batch is mostly account-level controls (CloudTrail config, root account, password policy).
 
-### 5.7 Capture findings as evidence
+### Step 6 Capture findings as evidence
 
 ```bash
 mkdir -p evidence/lab-5-2

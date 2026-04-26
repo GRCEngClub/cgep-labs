@@ -50,11 +50,11 @@ The module produces one keyring, one CMEK, one IAM binding, one bucket. Two cons
 
 ## Step-by-step walkthrough
 
-### 5.1 Why a module
+### Concept: Why a module
 
 A module is a directory of Terraform with a clear interface: inputs, outputs, and a body. The body decides what's hardcoded. The interface decides what consumers can change. If you've done Lab 2.3, you wrote one bucket on AWS. This time you write one module on GCP and call it twice.
 
-### 5.2 Design the interface
+### Concept: Design the interface
 
 Three rules:
 
@@ -64,7 +64,7 @@ Three rules:
 
 Consumers write a few lines. The module enforces the rest.
 
-### 5.3 Build `modules/compliant-gcs-bucket/main.tf`
+### Step 1 Build `modules/compliant-gcs-bucket/main.tf`
 
 ```hcl
 # main.tf
@@ -145,7 +145,7 @@ resource "google_storage_bucket" "bucket" {
 
 Required labels live in `locals`, then merge on top of `var.labels`. A consumer can add labels but cannot suppress the four compliance ones. That asymmetry is the point.
 
-### 5.4 Build `variables.tf` with validation
+### Step 2 Build `variables.tf` with validation
 
 ```hcl
 # variables.tf
@@ -217,7 +217,7 @@ variable "labels" {
 
 > **Why two location vars:** GCS buckets accept multi-region names like `US` and `EU`. KMS keyrings do not. The first time I tried `var.location = "US"` for both, KMS rejected with `KMS_RESOURCE_NOT_FOUND_IN_LOCATION`. Splitting the variable keeps the lesson honest. Both default to `us-central1`.
 
-### 5.5 Build `outputs.tf` returning compliance evidence
+### Step 3 Build `outputs.tf` returning compliance evidence
 
 ```hcl
 # outputs.tf
@@ -254,7 +254,7 @@ output "compliance_attestation" {
 
 `compliance_attestation` is the bridge to Lab 3 (Rego asserts on it) and Lab 6 (OSCAL evidence URI points at the JSON it ends up in).
 
-### 5.6 Write consumer #1: dev environment, 30-day retention
+### Step 4 Write consumer #1: dev environment, 30-day retention
 
 ```hcl
 # consumers/dev/main.tf
@@ -286,7 +286,7 @@ output "bucket_url"  { value = module.data_bucket.bucket_url }
 
 Six lines of business config. Twenty-plus controls.
 
-### 5.7 Write consumer #2: prod environment, 365-day retention
+### Step 5 Write consumer #2: prod environment, 365-day retention
 
 Same module, swap two values:
 
@@ -305,7 +305,7 @@ module "data_bucket" {
 
 (Same provider block, same outputs.)
 
-### 5.8 Apply and observe
+### Step 6 Apply and observe
 
 Run the cycle on dev. For lab purposes, prod-plan but don't apply (a 365-day retention lock takes a year to expire):
 
@@ -333,7 +333,7 @@ bucket_url = "gs://cgep-lab-dev-dev-data-001"
 
 That output is the SC-12 / SC-13 / SC-28 / AC-3 / CM-6 / AU-11 attestation in machine-readable form.
 
-### 5.9 The negative test
+### Step 7 The negative test
 
 Copy `consumers/dev` to `consumers/negative-test`, change `environment` to `prod`, leave `retention_days` at 30, and run plan:
 

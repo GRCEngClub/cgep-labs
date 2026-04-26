@@ -51,13 +51,13 @@ You have a pipeline. You have an immutable vault. This lab connects them with cr
 
 ## Step-by-step walkthrough
 
-### 5.1 Why signing matters
+### Concept: Why signing matters
 
 Lab 2.5 made the bundle immutable. Object Lock prevents deletion, but it doesn't prove who created the bundle or when. A determined insider with admin in the AWS account can stand up a *different* bucket, drop a tampered bundle, and point a sloppy auditor at it. Cosign closes that loop. The signature ties the bundle to a specific GitHub Actions run on a specific repository at a specific moment. The certificate Sigstore issues includes the OIDC subject (`repo:GRCEngClub/cgep-app-starter:ref:refs/pull/...`). The Rekor transparency log timestamps it. None of that is bypassable by anyone with admin in your AWS account, because none of it lives in your AWS account.
 
 Three ways the chain breaks: mutable storage (Lab 2.5 fixed that), no signing (this lab), short retention (Lab 2.5 default-retention fixed that). Close all three or you have a story, not a chain.
 
-### 5.2 Add Cosign to the workflow
+### Step 1 Add Cosign to the workflow
 
 Two new steps in `.github/workflows/grc-gate.yml`. After the existing scan and plan steps:
 
@@ -109,7 +109,7 @@ The `--bundle evidence.sig.bundle` flag packs the signature, the certificate Sig
 
 > **Important**: in Lab 4.3 the policy gate exited the job on failure. Here we want to sign and store the evidence even when the gate fails, so the evidence trail is preserved. Move the pass/fail decision to the *last* step in the job. Lab 4.4's reference workflow does this.
 
-### 5.3 Grant the role write to the vault
+### Step 2 Grant the role write to the vault
 
 The Lab 4.3 OIDC role had `ReadOnlyAccess`. Grant a tight write inline policy on the vault:
 
@@ -135,7 +135,7 @@ gh variable set EVIDENCE_VAULT --body "$VAULT" --repo OWNER/REPO
 
 Two scopes only: the vault and its objects. Nothing else.
 
-### 5.4 The verify script
+### Step 3 The verify script
 
 ```bash
 #!/usr/bin/env bash
@@ -185,7 +185,7 @@ echo "CHAIN INTACT for run ${RUN_ID}"
 
 Three checks, three exits if any fail. The output you want to see at the end is one line: `CHAIN INTACT`.
 
-### 5.5 Trigger a fresh PR
+### Step 4 Trigger a fresh PR
 
 Push the workflow update. The next PR run produces signed bundles. From your laptop:
 
@@ -207,7 +207,7 @@ Verified OK
 CHAIN INTACT for run 24963918994
 ```
 
-### 5.6 The tamper test
+### Step 5 The tamper test
 
 Download the bundle. Modify a single byte. Re-run `verify-evidence.sh`. The integrity step fails immediately. The signature, computed over the original bytes, now disagrees with the modified file's SHA. That failure is the lesson: chain of custody is mathematical, not aspirational.
 
