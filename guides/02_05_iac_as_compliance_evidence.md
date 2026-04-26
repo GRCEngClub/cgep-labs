@@ -255,7 +255,7 @@ bash scripts/capture-evidence.sh \
   --workspace ../lab-2-3 \
   --run-id    test-001 \
   --vault     "$VAULT" \
-  --profile   club
+  --profile   <your-sandbox>
 ```
 
 Receipt:
