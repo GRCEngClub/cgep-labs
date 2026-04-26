@@ -1,0 +1,20 @@
+# Terraform local state and plans
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+crash.log
+
+# Lambda build artifacts
+**/lambda/handler.zip
+
+# Local-only
+.DS_Store
+*.swp
+.vscode/
+
+# Secrets and tfvars (commit *.tfvars.example only)
+*.tfvars
+!*.tfvars.example
