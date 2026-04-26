@@ -1,0 +1,140 @@
+# .github/workflows/grc-gate.yml
+#
+# CGE-P GRC evidence pipeline. Runs on every PR to main:
+#   1. Plan the Terraform.
+#   2. Run the OPA / Conftest policy gate.
+#   3. Run a security scanner (tfsec).
+#   4. Upload plan + policy results + scan results as a named artifact.
+#
+# Apply, sign, and vault upload come in Lab 4.4.
+
+name: grc-gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write       # required for AWS OIDC + Cosign keyless
+  contents: read
+  pull-requests: write  # required to comment on the PR
+
+env:
+  AWS_REGION: us-east-1
+  TF_WORKING_DIR: terraform
+
+jobs:
+  grc-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.6
+          terraform_wrapper: false
+
+      - name: Install Conftest
+        run: |
+          curl -fsSL https://github.com/open-policy-agent/conftest/releases/download/v0.50.0/conftest_0.50.0_Linux_x86_64.tar.gz \
+            | tar -xz -C /usr/local/bin conftest
+
+      - name: Install tfsec
+        run: |
+          curl -fsSL https://github.com/aquasecurity/tfsec/releases/download/v1.28.14/tfsec-linux-amd64 \
+            -o /usr/local/bin/tfsec && chmod +x /usr/local/bin/tfsec
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan -out=tfplan -no-color | tee plan.txt
+          terraform show -json tfplan > plan.json
+
+      - name: Conftest policy gate
+        id: conftest
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          mkdir -p ../evidence
+          # Run all four namespaces; keep going on failure to capture full output.
+          {
+            echo "["
+            FIRST=1
+            for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws compliance.cm6 ; do
+              [[ $FIRST -eq 1 ]] && FIRST=0 || printf ","
+              conftest test --policy ../policies --namespace "$ns" --output=json plan.json || true
+            done
+            echo "]"
+          } > ../evidence/conftest-results.json
+          # Decide pass/fail.
+          python3 -c '
+          import json, sys
+          d = json.load(open("../evidence/conftest-results.json"))
+          fails = sum(len(r.get("failures") or []) for results in d for r in results)
+          print(f"conftest failures: {fails}")
+          sys.exit(0 if fails == 0 else 1)
+          '
+
+      - name: tfsec scan
+        id: tfsec
+        if: always()
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          tfsec . --format sarif --out ../evidence/tfsec.sarif || true
+          # Only fail the job on HIGH or CRITICAL findings.
+          python3 -c '
+          import json, sys
+          d = json.load(open("../evidence/tfsec.sarif"))
+          high = 0
+          for run in d.get("runs", []):
+              for r in run.get("results", []):
+                  level = (r.get("level") or "").lower()
+                  if level in ("error", "critical", "high"):
+                      high += 1
+          print(f"tfsec high+critical: {high}")
+          sys.exit(0 if high == 0 else 1)
+          '
+
+      - name: Copy plan into evidence
+        if: always()
+        run: |
+          cp ${{ env.TF_WORKING_DIR }}/plan.json evidence/plan.json
+          cp ${{ env.TF_WORKING_DIR }}/plan.txt  evidence/plan.txt
+
+      - name: Upload evidence artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: grc-evidence-${{ github.run_id }}
+          path: evidence/
+          retention-days: 90
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## GRC gate run #${{ github.run_id }}
+
+            - Conftest: `${{ steps.conftest.outcome }}`
+            - tfsec:    `${{ steps.tfsec.outcome }}`
+            - Evidence: see workflow artifacts (`grc-evidence-${{ github.run_id }}`).
+
+            Lab 4.4 will sign this bundle with Cosign and upload it to the Object Lock vault.
