@@ -12,7 +12,7 @@ You've spent enough time in spreadsheets pretending they're controls. This lab e
 
 - AWS account with permissions to create S3 buckets in `us-east-1` (administrator-equivalent on a sandbox account is easiest).
 - Terraform `>= 1.6` (`terraform version`).
-- AWS CLI v2 with a working profile. This lab uses `--profile <your-sandbox>` and exports SSO credentials before running Terraform, adapt to your profile.
+- AWS CLI v2 with a working profile. Examples below use `--profile <your-sandbox>`; substitute your profile name. If your profile uses AWS SSO, export credentials with `eval "$(aws configure export-credentials --profile <your-sandbox> --format env)"` before running Terraform.
 - 30–45 minutes of focus.
 
 ## Estimated time & cost

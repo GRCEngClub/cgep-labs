@@ -10,7 +10,7 @@ Lab 2.3 built one bucket. This lab builds a pattern. The shift to feel: you don'
 
 ## Prerequisites
 
-- GCP project with billing enabled (lab uses `your-gcp-project`, you can swap yours in).
+- A GCP project you control, with billing enabled. Examples below use the placeholder `your-gcp-project`; substitute your project ID.
 - `gcloud` authenticated for both interactive (`gcloud auth login`) and Application Default Credentials (`gcloud auth application-default login`). Terraform's google provider uses ADC.
 - Roles: `roles/storage.admin`, `roles/cloudkms.admin` on the project.
 - Cloud KMS API enabled: `gcloud services enable cloudkms.googleapis.com`.
