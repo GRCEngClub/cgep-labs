@@ -1,0 +1,138 @@
+{
+  "component-definition": {
+    "uuid": "780d1d40-5706-4ab0-a0a8-b7ce6cd6971c",
+    "metadata": {
+      "title": "compliant-s3 module v1",
+      "last-modified": "2026-04-26T18:00:00.000000+00:00",
+      "version": "1.0.0",
+      "oscal-version": "1.1.3",
+      "parties": [
+        {
+          "uuid": "f0626975-9ed2-4a57-8dde-362a81e19d91",
+          "type": "organization",
+          "name": "GRC Engineering Club"
+        }
+      ]
+    },
+    "components": [
+      {
+        "uuid": "6b488389-0af3-4866-93c0-2d1c2d8481d2",
+        "type": "software",
+        "title": "compliant-s3",
+        "description": "Reusable Terraform pattern for an AWS S3 primary bucket plus a dedicated access-log bucket. Hardcodes server-side encryption, versioning, public access block, access logging, and required compliance tags. Maps to CGE-P Lab 2.3.",
+        "purpose": "Provide a compliant-by-default S3 primitive that any team can adopt with three lines of consumer Terraform.",
+        "responsible-roles": [
+          {
+            "role-id": "provider",
+            "party-uuids": [
+              "f0626975-9ed2-4a57-8dde-362a81e19d91"
+            ]
+          }
+        ],
+        "control-implementations": [
+          {
+            "uuid": "bd3fd77a-f7fd-4599-89b6-16e9b7da9e89",
+            "source": "https://raw.githubusercontent.com/usnistgov/oscal-content/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json",
+            "description": "Implementation of NIST 800-53 Rev 5 controls satisfied by this Terraform module.",
+            "implemented-requirements": [
+              {
+                "uuid": "97aaf9b2-c84b-4a7f-a8e1-90321e437630",
+                "control-id": "sc-28",
+                "description": "AES-256 server-side encryption is enforced via aws_s3_bucket_server_side_encryption_configuration on both the primary and the access-log buckets. Encryption is hardcoded in the module body; consumers cannot override it.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "aws_s3_bucket_server_side_encryption_configuration.primary"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "aws_s3_bucket_server_side_encryption_configuration.log"
+                  }
+                ],
+                "links": [
+                  {
+                    "rel": "evidence",
+                    "href": "s3://EVIDENCE_VAULT/runs/LATEST/evidence-LATEST.tar.gz",
+                    "text": "Signed pipeline bundle containing terraform plan.json with the encryption configuration."
+                  },
+                  {
+                    "rel": "reference",
+                    "href": "https://github.com/GRCEngClub/cgep-labs/blob/main/reference/lab-2-3/main.tf",
+                    "text": "Source Terraform for this module."
+                  }
+                ]
+              },
+              {
+                "uuid": "39383c4a-22c3-49c2-815e-02aba6e04e99",
+                "control-id": "ac-3",
+                "description": "Public access is blocked on both buckets via aws_s3_bucket_public_access_block. All four flags (block_public_acls, block_public_policy, ignore_public_acls, restrict_public_buckets) are set to true. The module does not expose these flags as variables.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "aws_s3_bucket_public_access_block.primary"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "aws_s3_bucket_public_access_block.log"
+                  }
+                ],
+                "links": [
+                  {
+                    "rel": "evidence",
+                    "href": "s3://EVIDENCE_VAULT/runs/LATEST/evidence-LATEST.tar.gz",
+                    "text": "Signed pipeline bundle. terraform/plan.json contains the four-true public access block."
+                  }
+                ]
+              },
+              {
+                "uuid": "312033ed-9c7b-46e3-af9c-c92c1fc85ae7",
+                "control-id": "au-3",
+                "description": "Access logs from the primary bucket are routed to a dedicated log bucket via aws_s3_bucket_logging. The log bucket carries its own encryption and public access block.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "aws_s3_bucket_logging.primary"
+                  }
+                ]
+              },
+              {
+                "uuid": "ee017424-3dda-4555-a077-7e534fc22b33",
+                "control-id": "cm-6",
+                "description": "Four required compliance tags (Project, Environment, ManagedBy, ComplianceScope) are applied via the AWS provider's default_tags block. Variable validation rejects environments outside dev/staging/prod and project names outside the regex.",
+                "props": [
+                  {
+                    "name": "implementation-status",
+                    "value": "implemented"
+                  },
+                  {
+                    "name": "terraform-resource",
+                    "value": "provider.aws.default_tags"
+                  }
+                ],
+                "links": [
+                  {
+                    "rel": "evidence",
+                    "href": "s3://EVIDENCE_VAULT/runs/LATEST/evidence-LATEST.tar.gz",
+                    "text": "Signed pipeline bundle. Conftest output verifies tags_all contains all four required keys."
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
