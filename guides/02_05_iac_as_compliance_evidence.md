@@ -238,7 +238,7 @@ terraform version > "$BUNDLE_DIR/version.txt"
   echo "]"
 } > "$BUNDLE_DIR/manifest.json"
 
-BUNDLE_TGZ="$WORK/bundle-$RUN_ID.tar.gz"
+BUNDLE_TGZ="/tmp/bundle-$RUN_ID.tar.gz"
 ( cd "$WORK" && tar czf "$BUNDLE_TGZ" "bundle-$RUN_ID" )
 
 KEY="runs/$RUN_ID/bundle.tar.gz"
