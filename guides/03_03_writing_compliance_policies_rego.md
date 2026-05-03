@@ -86,9 +86,43 @@ resource "google_storage_bucket" "good" {
 }
 
 # Non-compliant cases (each will trip exactly one policy).
-resource "google_storage_bucket" "bad_no_cmek"   { /* same as good, no encryption block */ }
-resource "google_storage_bucket" "bad_public"    { /* uniform_bucket_level_access = false */ }
-resource "google_storage_bucket" "bad_no_labels" { /* no labels */ }
+resource "google_storage_bucket" "bad_no_cmek" {
+  name                        = "${var.gcp_project}-lab33-bad-no-cmek"
+  location                    = "us-central1"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  labels = {
+    project          = "lab33"
+    environment      = "dev"
+    managed_by       = "terraform"
+    compliance_scope = "cge-p-lab"
+  }
+}
+
+resource "google_storage_bucket" "bad_public" {
+  name                        = "${var.gcp_project}-lab33-bad-public"
+  location                    = "us-central1"
+  uniform_bucket_level_access = false
+
+  encryption { default_kms_key_name = google_kms_crypto_key.key.id }
+
+  labels = {
+    project          = "lab33"
+    environment      = "dev"
+    managed_by       = "terraform"
+    compliance_scope = "cge-p-lab"
+  }
+}
+
+resource "google_storage_bucket" "bad_no_labels" {
+  name                        = "${var.gcp_project}-lab33-bad-no-labels"
+  location                    = "us-central1"
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced"
+
+  encryption { default_kms_key_name = google_kms_crypto_key.key.id }
+}
 
 resource "google_compute_network" "demo" {
   name                    = "lab33-demo"
