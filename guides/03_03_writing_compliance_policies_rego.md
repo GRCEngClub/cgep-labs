@@ -100,7 +100,10 @@ resource "google_compute_firewall" "open_ssh" {
   network       = google_compute_network.demo.name
   direction     = "INGRESS"
   source_ranges = ["0.0.0.0/0"]
-  allow { protocol = "tcp", ports = ["22"] }
+  allow {
+    protocol = "tcp"
+    ports    = ["22"]
+  }
 }
 ```
 
