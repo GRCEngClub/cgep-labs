@@ -139,7 +139,10 @@ resource "aws_s3_bucket_policy" "vault" {
 
 ```hcl
 # terraform/variables.tf
-variable "project_name" { type = string, default = "cgep-lab" }
+variable "project_name" {
+  type    = string
+  default = "cgep-lab"
+}
 
 variable "lock_mode" {
   type        = string
