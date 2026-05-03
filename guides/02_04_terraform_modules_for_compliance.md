@@ -335,10 +335,10 @@ That output is the SC-12 / SC-13 / SC-28 / AC-3 / CM-6 / AU-11 attestation in ma
 
 ### Step 7 The negative test
 
-Copy `consumers/dev` to `consumers/negative-test`, change `environment` to `prod`, leave `retention_days` at 30, and run plan:
+Copy `consumers/dev` to `consumers/negative-test`. Change `environment` to `prod`, change `bucket_name_suffix` to `"should-never-exist"`, leave `retention_days` at 30, and run plan:
 
 ```hcl
-module "broken_bucket" {
+module "data_bucket" {
   source = "../../modules/compliant-gcs-bucket"
 
   gcp_project        = "your-gcp-project"
