@@ -221,6 +221,20 @@ jobs:
           name: grc-evidence-${{ github.run_id }}
           path: evidence/
           retention-days: 90
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ## GRC gate run #${{ github.run_id }}
+
+            - Conftest: `${{ steps.conftest.outcome }}`
+            - tfsec:    `${{ steps.tfsec.outcome }}`
+            - Evidence: see workflow artifacts (`grc-evidence-${{ github.run_id }}`).
+
+            Lab 4.4 will sign this bundle with Cosign and upload it to the Object Lock vault.
 ```
 
 A few specific choices worth understanding:
