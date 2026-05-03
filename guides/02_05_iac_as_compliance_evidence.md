@@ -161,6 +161,14 @@ variable "retention_days" {
 }
 ```
 
+```hcl
+# terraform/outputs.tf
+output "vault_name" {
+  value       = aws_s3_bucket.vault.id
+  description = "S3 bucket name of the evidence vault. Feed this to capture-evidence.sh --vault."
+}
+```
+
 > **GOVERNANCE vs COMPLIANCE.** GOVERNANCE retention can be bypassed by a privileged caller using `--bypass-governance-retention`. COMPLIANCE cannot be bypassed by anyone, including root, until the retention window expires. Use GOVERNANCE for lab work so you can clean up. Use COMPLIANCE for real evidence. The script and the rest of the pattern are identical either way.
 
 ### Step 2 Write `capture-evidence.sh`
