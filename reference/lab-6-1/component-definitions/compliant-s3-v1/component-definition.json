@@ -105,6 +105,13 @@
                     "name": "terraform-resource",
                     "value": "aws_s3_bucket_logging.primary"
                   }
+                ],
+                "links": [
+                  {
+                    "rel": "evidence",
+                    "href": "s3://EVIDENCE_VAULT/runs/LATEST/evidence-LATEST.tar.gz",
+                    "text": "Signed pipeline bundle. terraform/plan.json contains the aws_s3_bucket_logging configuration routing primary access logs to the dedicated log bucket."
+                  }
                 ]
               },
               {
