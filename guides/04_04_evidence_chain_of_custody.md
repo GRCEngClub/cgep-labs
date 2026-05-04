@@ -59,7 +59,9 @@ Three ways the chain breaks: mutable storage (Lab 2.5 fixed that), no signing (t
 
 ### Step 1 Add Cosign to the workflow
 
-Two new steps in `.github/workflows/grc-gate.yml`. After the existing scan and plan steps:
+The Lab 4.4 update to `.github/workflows/grc-gate.yml` is six changes: two new steps, three existing steps modified, and one brand-new step at the end of the job. Apply them all, or the gate's evidence-on-failure semantics break.
+
+First, add the Cosign installer alongside the other tool installers (between `Install tfsec` and `Terraform plan`):
 
 ```yaml
 - name: Install Cosign
@@ -107,7 +109,89 @@ Then, after `Copy plan into evidence`, the bundle/sign/upload step:
 
 The `--bundle evidence.sig.bundle` flag packs the signature, the certificate Sigstore Fulcio issued, and the Rekor entry into one file. That file is what your verify script consumes.
 
-> **Important**: in Lab 4.3 the policy gate exited the job on failure. Here we want to sign and store the evidence even when the gate fails, so the evidence trail is preserved. Move the pass/fail decision to the *last* step in the job. Lab 4.4's reference workflow does this.
+> **Important**: in Lab 4.3 the policy gate exited the job on failure. Here we want to sign and store the evidence even when the gate fails, so the evidence trail is preserved. Move the pass/fail decision to the *last* step in the job, and stop exiting non-zero from the Conftest step itself.
+
+Update the existing `Conftest policy gate` step from Lab 4.3 to drop the `sys.exit(...)` line. The step still records failures; it just doesn't abort the job:
+
+```yaml
+- name: Conftest policy gate
+  id: conftest
+  working-directory: ${{ env.TF_WORKING_DIR }}
+  run: |
+    mkdir -p ../evidence
+    {
+      echo "["
+      FIRST=1
+      for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws compliance.cm6 ; do
+        [[ $FIRST -eq 1 ]] && FIRST=0 || printf ","
+        conftest test --policy ../policies --namespace "$ns" --output=json plan.json || true
+      done
+      echo "]"
+    } > ../evidence/conftest-results.json
+    python3 -c '
+    import json, sys
+    d = json.load(open("../evidence/conftest-results.json"))
+    fails = sum(len(r.get("failures") or []) for results in d for r in results)
+    print(f"conftest failures: {fails}")
+    ' # do not exit on failure here; we want to sign and store the failed evidence too
+```
+
+Update the `Upload evidence artifact` step so the artifact also captures the signed bundle, sidecars, and receipt:
+
+```yaml
+- name: Upload evidence artifact
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: grc-evidence-${{ github.run_id }}
+    path: |
+      evidence/
+      evidence-${{ github.run_id }}-*.tar.gz
+      evidence-${{ github.run_id }}-*.sig.bundle
+      evidence-${{ github.run_id }}-*.sha256
+      receipt.json
+    retention-days: 90
+```
+
+Update the `Comment on PR` step body to surface the sign step, vault location, and the verify command:
+
+```yaml
+- name: Comment on PR
+  if: github.event_name == 'pull_request'
+  uses: peter-evans/create-or-update-comment@v4
+  with:
+    issue-number: ${{ github.event.pull_request.number }}
+    body: |
+      ## GRC gate run #${{ github.run_id }}
+
+      - Conftest: `${{ steps.conftest.outcome }}`
+      - tfsec:    `${{ steps.tfsec.outcome }}`
+      - Sign + vault upload: `${{ steps.sign.outcome }}`
+
+      Bundle in vault: `s3://${{ vars.EVIDENCE_VAULT }}/runs/${{ github.run_id }}/`
+
+      Verify locally:
+      ```bash
+      scripts/verify-evidence.sh ${{ github.run_id }}
+      ```
+```
+
+Finally, add the `Decide pass/fail` step as the *last* step in the job. It re-reads the conftest results after signing has already happened and converts a failure count into a non-zero exit:
+
+```yaml
+- name: Decide pass/fail
+  if: always()
+  run: |
+    python3 -c '
+    import json, sys
+    d = json.load(open("evidence/conftest-results.json"))
+    fails = sum(len(r.get("failures") or []) for results in d for r in results)
+    print(f"final conftest failures: {fails}")
+    sys.exit(0 if fails == 0 else 1)
+    '
+```
+
+The order matters: signing and uploading run unconditionally (`if: always()`), then the gate decision happens at the end. A red PR still produces a signed, uploaded bundle — the auditor sees both the failure and the receipt for it.
 
 ### Step 2 Grant the role write to the vault
 
