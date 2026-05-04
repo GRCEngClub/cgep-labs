@@ -15,7 +15,18 @@ GCP leads with identity and data. Where AWS gives you a flat IAM policy and a Se
 - `gcloud` authenticated for both `gcloud auth login` (interactive) and `gcloud auth application-default login` (Terraform's google provider uses ADC).
 - Terraform `>= 1.6`.
 
-If your project sits inside an Organization and you want to apply Org Policy at the org or folder scope, the same resources below take a different `parent` value. The lab uses project scope so it works in any GCP environment.
+If your project sits inside an Organization and you want to apply Org Policy at the org or folder scope, the same resources below take a different `parent` value. The lab uses project scope, which works for any project that has an Organization parent.
+
+> **Standalone projects (no Organization parent) cannot run Step 1.** Org Policy management requires `roles/orgpolicy.policyAdmin`, which is not grantable on a standalone project. As `roles/owner` you'll get `INVALID_ARGUMENT: Role roles/orgpolicy.policyAdmin is not supported for this resource` when granting, and the apply itself returns `Permission 'orgpolicy.policies.create' denied`. Steps 3 (WIF) and 4 (Audit logs) work fine on standalone projects; only Step 1 + 2 are blocked. Two workarounds:
+>
+> **Option A — Move the project under an Organization (full enforcement).** This is the lab as-designed. Requires owning a domain (~$10-15/yr from any registrar) and setting up a free [Cloud Identity](https://cloud.google.com/identity) account for that domain (Google Workspace also works if you already have it). Cloud Identity creates the GCP Organization automatically. Then move your project under it with the [Resource Manager migrate flow](https://cloud.google.com/resource-manager/docs/project-migration). After that, `roles/orgpolicy.policyAdmin` becomes grantable on the org or the project, and Steps 1 + 2 work as written.
+>
+> **Option B — Standalone-project workaround (per-resource defaults + Rego).** Skip Step 1 + 2 and enforce equivalent guarantees one layer deeper:
+> - For `storage.uniformBucketLevelAccess`: set `uniform_bucket_level_access = true` and `public_access_prevention = "enforced"` on every `google_storage_bucket` resource directly. The Lab 2.4 module already does this; reuse it.
+> - For `iam.disableServiceAccountKeyCreation`: there is no per-SA equivalent at the API. Rely on Lab 3.3's `compliance.cm6` / Conftest gate to flag any `google_service_account_key` resource at PR time, before merge. Detective at PR time instead of preventive at API call time.
+> - For `compute.requireOsLogin`: set `enable-oslogin = "TRUE"` in `metadata` on every `google_compute_instance` resource (or in project metadata via `google_compute_project_metadata`).
+>
+> Option B is weaker (defense-in-depth at the resource and PR layers, not API-layer rejection), but works without changing your project's parent.
 
 ## Estimated time & cost
 
