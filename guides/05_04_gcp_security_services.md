@@ -249,6 +249,16 @@ gcloud iam service-accounts keys create /tmp/k.json \
 - **WIF `attribute.repository` condition mismatch.** GitHub's `assertion.repository` is the `OWNER/REPO` literal. Spelling, case, and the slash all matter. If your workflow gets opaque `PERMISSION_DENIED` from `auth@v2`, the condition is wrong.
 - **Data Access logs cost.** In a busy project these can ingest GBs/day. Start with a single service (`storage.googleapis.com`) before turning on KMS and IAM.
 - **`google_org_policy_policy` requires the v2 Org Policy API.** Run `gcloud services enable orgpolicy.googleapis.com` if Terraform errors with `policySpec is not supported`.
+- **`Error 403: ... requires a quota project ... "consumer": "projects/<some-google-id>", "reason": "SERVICE_DISABLED"`** on first apply, despite `orgpolicy.googleapis.com` being enabled on your project. The terraform google provider, when authenticating via ADC (`gcloud auth application-default login`), bills API quota to a Google-managed project number (not your `var.gcp_project`), and that project does not have the API enabled. Setting the ADC quota project alone (`gcloud auth application-default set-quota-project ...`) is NOT enough; the provider needs explicit flags. Add to your `provider "google"` block:
+  ```hcl
+  provider "google" {
+    project               = var.gcp_project
+    region                = "us-central1"
+    user_project_override = true
+    billing_project       = var.gcp_project
+  }
+  ```
+  This tells the provider to bill API quota to your project regardless of ADC's default.
 
 ## Cleanup
 
