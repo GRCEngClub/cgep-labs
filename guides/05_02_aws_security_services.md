@@ -49,6 +49,39 @@ Every cloud security vendor will sell you a slick console. CloudTrail, Config, a
 
 Multi-region, with log-file validation on (AU-10). The bucket policy must scope the `aws:SourceArn` condition to the trail you're about to create.
 
+The CloudTrail snippet below references `random_id.suffix.hex`, `var.aws_region`, and `data.aws_caller_identity.current.account_id`. Wire those (and the provider) up first:
+
+```hcl
+# terraform/main.tf
+terraform {
+  required_version = ">= 1.6"
+  required_providers {
+    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+    random = { source = "hashicorp/random", version = "~> 3.6" }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+```
+
+```hcl
+# terraform/variables.tf
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+```
+
+Then the CloudTrail resources:
+
 ```hcl
 resource "aws_s3_bucket" "trail" {
   bucket        = "cgep-lab-cloudtrail-${random_id.suffix.hex}"
