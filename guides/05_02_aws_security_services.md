@@ -130,7 +130,9 @@ resource "aws_cloudtrail" "mgmt" {
 Two standards subscribed: NIST 800-53 Rev 5 and AWS Foundational Security Best Practices. Both are free to subscribe to; you pay per security check.
 
 ```hcl
-resource "aws_securityhub_account" "this" {}
+resource "aws_securityhub_account" "this" {
+  enable_default_standards = false
+}
 
 resource "aws_securityhub_standards_subscription" "nist_800_53" {
   standards_arn = "arn:aws:securityhub:${var.aws_region}::standards/nist-800-53/v/5.0.0"
@@ -143,11 +145,32 @@ resource "aws_securityhub_standards_subscription" "fsbp" {
 }
 ```
 
-If Security Hub is already enabled in the account from a previous experiment or org baseline, terraform apply will hit `ResourceConflictException`. Import it instead:
+> **Why `enable_default_standards = false`.** The provider's default for this argument is `true`, and it's `ForceNew`. If your account already has Security Hub enabled but with `false` (a common state when CIS / NIST / FSBP were attached by other automation), an empty `{}` body forces terraform to *replace* the hub on first apply, which momentarily disables Security Hub for the whole account. Declaring `false` explicitly keeps the apply non-destructive.
+
+If Security Hub is already enabled in the account from a previous experiment or org baseline, terraform apply will hit `ResourceConflictException` on the hub. Import it:
 
 ```bash
 terraform import aws_securityhub_account.this <ACCOUNT_ID>
 ```
+
+If the account also has the standards already subscribed (very common — any compliance-active account tends to), the standards-subscription resources will hit the same `ResourceConflictException` on apply. Check first:
+
+```bash
+aws securityhub get-enabled-standards \
+  --query 'StandardsSubscriptions[].StandardsSubscriptionArn' --output json
+```
+
+For each existing subscription, import using the **subscription ARN** (account-scoped, with `subscription/` path) — NOT the `standards_arn` argument value (region-scoped, with `standards/` path):
+
+```bash
+terraform import aws_securityhub_standards_subscription.nist_800_53 \
+  'arn:aws:securityhub:<REGION>:<ACCOUNT_ID>:subscription/nist-800-53/v/5.0.0'
+
+terraform import aws_securityhub_standards_subscription.fsbp \
+  'arn:aws:securityhub:<REGION>:<ACCOUNT_ID>:subscription/aws-foundational-security-best-practices/v/1.0.0'
+```
+
+The two ARN forms look almost identical, which is the trap: the `standards_arn` resource argument takes `arn:aws:securityhub:REGION::standards/...`, but the import ID is `arn:aws:securityhub:REGION:ACCOUNT:subscription/...`. Passing the wrong one returns a misleading `AccessDeniedException` rather than a "wrong ARN" error.
 
 ### Step 3 AWS Config (may be SCP-blocked)
 
