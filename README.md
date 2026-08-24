@@ -5,9 +5,19 @@
 ## What's here
 
 ```
-guides/        Lab guides, one markdown file per lab
-reference/     Companion Terraform / Rego / shell workspaces, one per lab
+getting-started/  One-time tool and repository setup. Do this before Lab 2.3.
+guides/           Lab guides, one markdown file per lab, plus glossary and resources
+reference/        Companion Terraform / Rego / shell workspaces, one per lab
 ```
+
+## Start here
+
+New to the labs? Do these once, in order, before anything else:
+
+1. [Set up your tools](getting-started/tools.md) — Git Bash, Terraform, AWS CLI
+2. [Set up your repo](getting-started/repo-structure.md) — the `cgep-labs` shape every lab reuses
+
+Then work the labs in order. Unfamiliar terms are in the [Glossary](guides/glossary.md); videos and vendor docs are in [Additional Resources](guides/additional_resources.md).
 
 The guides are the lab. The reference workspaces are the same code in deployable form so you can run it and see it work, then build your own version in your capstone repo.
 
@@ -25,7 +35,8 @@ The guides are the lab. The reference workspaces are the same code in deployable
 | [5.2](guides/05_02_aws_security_services.md) | AWS Security Services Baseline | AWS |
 | [5.4](guides/05_04_gcp_security_services.md) | GCP Security Services Baseline | GCP |
 | [6.1](guides/06_01_introduction_to_oscal.md) | Introduction to OSCAL | Cloud-agnostic |
-| [7.1](guides/07_01_capstone_brief.md) | Capstone Brief | AWS |
+| [7.1](guides/07_01_capstone_brief.md) | Capstone Brief (the graded contract) | AWS |
+| [7.2](guides/07_02_capstone_companion.md) | Capstone Companion (how to assemble it) | AWS |
 
 The labs alternate between AWS and GCP on purpose. The compliance-by-default pattern is cloud-agnostic; doing it in two providers makes that obvious.
 

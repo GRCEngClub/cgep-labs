@@ -1,73 +1,122 @@
-# Lab 3.4: Integrating PaC with Terraform via Conftest (AWS)
+# Lab 3.4: Integrating Policy as Code with Terraform via Conftest (AWS)
 
-You wrote three Rego policies in Lab 3.3 against GCP fixtures. This lab does two things. It runs those policies against an AWS Terraform plan via Conftest. And, more interestingly, it forces you to add AWS variants to your library because the original GCP-typed rules don't match AWS resource types. The library survives the cloud change because the control IDs do.
+In Lab 3.3 you wrote three Rego policies against GCP fixtures. This lab runs that library against an *AWS* plan, and in doing so teaches the most important lesson in the chapter: a control ID travels across clouds, but a Rego rule that hardcodes a GCP resource type does not. You'll watch the GCP rules pass with zero coverage on AWS infrastructure, then write AWS variants that keep the same control IDs. By the end you'll have a single script, `policy-gate.sh`, that your CI pipeline calls to block any pull request that violates a control.
 
-## Learning objectives
+For the GRC folks, this is the moment "the policy" becomes cloud-portable: SC-28 means the same thing on AWS and GCP even though the implementation differs. For the technical folks, this is wiring a policy engine into the plan workflow as a fail-closed gate, the thing that turns a manual review into an automatic one.
 
-- Wire Conftest into the Terraform plan workflow as a fail-closed gate.
-- Add AWS-resource-type variants of the SC-28 and AC-3 policies, preserving control IDs.
-- Demonstrate a blocked merge by feeding a deliberately broken plan to the gate.
+## Before you begin
 
-## Prerequisites
+If this is your first lab, set up [your tools](../getting-started/tools.md) and [your repo](../getting-started/repo-structure.md) first.
 
-- Lab 2.3 (AWS S3 compliant primitive) workspace on disk. We use its plan as the input.
-- Lab 3.3 policy library (`policies/`) carried into this lab. Three rules, three controls.
-- Conftest installed (`conftest --version`). Tested with `0.50` and newer.
+New tool for this lab:
 
-## Estimated time & cost
+- **Conftest**, a utility built on OPA that runs Rego policies against structured config (like a Terraform plan) and returns a pass/fail exit code, which is exactly what a CI gate needs. Official install: https://www.conftest.dev/install/ (releases at https://github.com/open-policy-agent/conftest/releases).
+  - macOS: `brew install conftest`
+  - Linux/Windows: download the archive from the releases page, extract `conftest`, put it on your PATH.
+  - Confirm with `conftest --version` (tested with 0.50 and newer).
 
-- 45 minutes.
-- Free. No additional AWS resources beyond Lab 2.3.
+You also need your `policies/` library from Lab 3.3 already in the repo (it is, since the wiki keeps one `policies/` directory at the root), and your Lab 2.3 AWS S3 code committed under `terraform/primitives/compliant-s3/`.
+
+> Because the repo has a single `policies/` directory, the original lab's "copy the policy folder from the previous lab" step disappears. Your 3.3 library is already where this lab needs it.
+
+## Time and cost
+
+- Time: about 45 minutes.
+- Cost: free. You only generate plans; nothing is applied.
 
 ## Architecture
 
 ```
-  Lab 2.3 workspace          policy-gate.sh (this lab)         CI (Lab 4.3)
-  ─────────────────          ────────────────────────         ──────────────
-  terraform plan -out=tfplan ─▶  terraform show -json    ─▶   on every PR:
-                                  conftest test               run policy-gate.sh,
-                                  (per namespace)             fail closed on any
-                                                              violation
+  Lab 2.3 code                  policy-gate.sh (this lab)        CI (Lab 4.3)
+  ────────────                  ────────────────────────        ────────────
+  terraform plan -out=tfplan ─▶ terraform show -json     ─▶     on every PR:
+                                conftest test                   run policy-gate.sh,
+                                (per control namespace)         fail closed on any
+                                                                violation
+```
+
+## Where these files live
+
+```
+cgep-labs/
+├── policies/
+│   ├── sc28_encryption_aws.rego      ← new in this lab
+│   ├── ac3_no_public_aws.rego        ← new in this lab
+│   ├── cm6_required_tags_aws.rego    ← new in this lab
+│   └── README.md                     ← update for AWS variants
+├── scripts/
+│   └── policy-gate.sh                ← new in this lab
+└── evidence/lab-3-4/
+    ├── conftest-pass.json            ← filled in when you run the gate
+    └── conftest-fail.json            ← filled in when you run the gate
+```
+
+### Scaffold this lab's empty files
+
+Run this once from the repo root (`cgep-labs`). It creates every path in the diagram above as an empty file so the later steps are "open and paste," not "guess where this goes."
+
+```bash
+# from the repo root
+mkdir -p policies scripts evidence/lab-3-4
+
+touch \
+  policies/sc28_encryption_aws.rego \
+  policies/ac3_no_public_aws.rego \
+  policies/cm6_required_tags_aws.rego \
+  scripts/policy-gate.sh
+
+# README may already exist from Lab 3.3; create it only if missing
+touch policies/README.md
+chmod +x scripts/policy-gate.sh
+
+find policies/*_aws.rego scripts/policy-gate.sh evidence/lab-3-4 | sort
 ```
 
 ## Step-by-step walkthrough
 
-### Step 1 Carry the Lab 3.3 library forward, run its tests
+### Step 1: Confirm the 3.3 library still passes
+
+Before extending the library, make sure it's healthy:
 
 ```bash
-cp -r ../lab-3-3/policies ./policies
-opa test -v policies/    # 8/8 PASS
+# from the repo root
+opa test -v policies/    # expect 8/8 PASS
 ```
 
-Sanity check the library still works in this workspace before extending it.
+### Step 2: Generate a plan from your Lab 2.3 code
 
-### Step 2 Generate plan.json from Lab 2.3
+You don't need the Lab 2.3 bucket to be live. `terraform plan` computes what *would* be created, so a plan works even with nothing deployed. It does need AWS credentials to check current state, but it applies nothing and costs nothing.
+
+> Commands below use `--profile default`. If you named your AWS CLI profile something else in Lab 2.3, replace `default` with that name.
 
 ```bash
-cd ../lab-2-3
-eval "$(aws configure export-credentials --profile <your-sandbox> --format env)"
+# from the repo root
+cd terraform/primitives/compliant-s3
+eval "$(aws configure export-credentials --profile default --format env)"  # if you use SSO
 terraform init
-terraform plan -out=tfplan
+# Pass the same vars Lab 2.3 used so plan doesn't prompt (CI can't type answers):
+terraform plan -out=tfplan -var="project_name=cgep-lab" -var="environment=dev"
 terraform show -json tfplan > plan.json
+cd ../../..
 ```
 
-Copy `plan.json` into the Conftest workspace, or point Conftest at it directly.
+### Step 3: The cross-cloud lesson
 
-### Step 3 The cross-cloud lesson
-
-Run the GCP policies against the AWS plan:
+Run your GCP policies against the AWS plan and watch what happens:
 
 ```bash
-conftest test --policy policies --namespace compliance.sc28 plan.json
-conftest test --policy policies --namespace compliance.ac3  plan.json
-conftest test --policy policies --namespace compliance.cm6  plan.json
+conftest test --policy policies --namespace compliance.sc28 terraform/primitives/compliant-s3/plan.json
+conftest test --policy policies --namespace compliance.ac3  terraform/primitives/compliant-s3/plan.json
+conftest test --policy policies --namespace compliance.cm6  terraform/primitives/compliant-s3/plan.json
 ```
 
-The first two pass with zero coverage. They check `google_storage_bucket` and `google_compute_firewall`. There are no GCP resources in this plan. The CM-6 rule fires (or doesn't) depending on whether your AWS resources carry the four required tags.
+The SC-28 and AC-3 rules pass, but they pass with *zero coverage*. They look for `google_storage_bucket` and `google_compute_firewall`, and there are none in an AWS plan, so they have nothing to check and nothing to complain about. That's a dangerous kind of "pass": green, but meaningless.
 
-The lesson: a control ID is portable, but a Rego rule that hardcodes `resource.type == "google_storage_bucket"` is not. Either you generalize the rule or you add per-cloud variants. Adding variants keeps each rule readable; generalizing makes one rule that handles every type. We add variants here.
+This is the lesson. The control ID `SC-28` is portable; the rule `resource.type == "google_storage_bucket"` is not. You have two choices: generalize each rule to handle every cloud's types, or write per-cloud variants. Variants keep each rule short and readable, so that's what you'll do, and you'll keep the same control IDs so the library stays organized by control rather than by cloud.
 
-### Step 4 Add the AWS variant of SC-28
+### Step 4: AWS variant of SC-28
+
+Open **`policies/sc28_encryption_aws.rego`** from the scaffold and paste:
 
 ```rego
 # policies/sc28_encryption_aws.rego
@@ -110,11 +159,11 @@ references_bucket(ref, bucket_addr) if ref == sprintf("%s.id", [bucket_addr])
 references_bucket(ref, bucket_addr) if ref == sprintf("%s.bucket", [bucket_addr])
 ```
 
-> **Why match by reference, not by value.** At plan time, the bucket name is "(known after apply)" because the random_id suffix isn't generated yet. Both `aws_s3_bucket.values.bucket` and the encryption resource's `values.bucket` are `null` in the JSON. Use `configuration.root_module.resources[].expressions.bucket.references` instead. Each reference is a string like `"aws_s3_bucket.primary.id"` that Terraform resolves at apply.
+> **Why this matches by reference instead of by value.** On AWS, encryption is a separate resource that points at the bucket, not a block inside it. And at plan time the bucket name is "known after apply" (the `random_id` suffix hasn't been generated), so the value-level fields are `null` in the JSON. The rule instead reads `configuration.root_module.resources[].expressions.bucket.references`, which holds strings like `"aws_s3_bucket.primary.id"` that Terraform resolves at apply. The policy asks "is an encryption resource wired to this bucket?" rather than "do the names match?", which is the only question answerable at plan time.
 
-### Step 5 Add the AWS variant of AC-3
+### Step 5: AWS variant of AC-3
 
-The AWS variant is more discriminating than the GCP one: it requires a public-access-block resource AND that all four flags are set true.
+This one is stricter than the GCP version: it requires the public-access-block resource to exist *and* all four of its flags to be `true`. Open **`policies/ac3_no_public_aws.rego`** and paste:
 
 ```rego
 # policies/ac3_no_public_aws.rego
@@ -171,9 +220,11 @@ pab_planned_values(addr) := values if {
 }
 ```
 
-### Step 6 Add the AWS variant of CM-6
+Notice this rule reads from *both* halves of the plan JSON. It uses `configuration` to find which public-access-block points at which bucket (the wiring, known at plan time), and `planned_values` to read the four flag values (which are real booleans you set literally, not "known after apply"). Knowing which half holds which kind of fact is most of the skill in writing Terraform-plan policies.
 
-The GCP rule used `labels`. AWS uses `tags`. With provider `default_tags` enabled, the merged tag set lives in `tags_all`.
+### Step 6: AWS variant of CM-6
+
+GCP used `labels`; AWS uses `tags`. With provider `default_tags` turned on (as in your Lab 2.3 code), the merged set lands in `tags_all`. Open **`policies/cm6_required_tags_aws.rego`** and paste:
 
 ```rego
 # policies/cm6_required_tags_aws.rego
@@ -232,12 +283,14 @@ tag_keys(resource) := set() if {
 sort_array(s) := sorted if { sorted := sort([x | some x in s]) }
 ```
 
-### Step 7 Run the gate against the compliant plan
+The three `tag_keys` definitions handle three states: tags merged by `default_tags` (`tags_all`), only locally-set tags (`tags`), or none at all. Rego picks whichever definition matches, which is how you write "fall back gracefully" without an if-else ladder.
+
+### Step 7: Run the gate against the compliant plan
 
 ```bash
 for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws ; do
   echo "=== $ns ==="
-  conftest test --policy policies --namespace $ns plan.json
+  conftest test --policy policies --namespace $ns terraform/primitives/compliant-s3/plan.json
 done
 ```
 
@@ -252,37 +305,42 @@ Expected:
 1 test, 1 passed, 0 warnings, 0 failures, 0 exceptions
 ```
 
-Lab 2.3's plan now has full AWS coverage from your policy library.
+Now your Lab 2.3 plan has real AWS coverage. These passes mean something, unlike the empty GCP passes in Step 3.
 
-### Step 8 Break it and watch the gate fire
+### Step 8: Break it and watch the gate fire
 
-Copy the Lab 2.3 workspace, remove the primary bucket's encryption configuration block, regenerate the plan, run Conftest:
+Copy your Lab 2.3 code to a throwaway folder, remove the encryption resource, regenerate the plan, and run the gate. (Don't commit this folder; it exists only to prove the gate works.)
 
 ```bash
-mkdir broken && cp ../lab-2-3/*.tf broken/
-# Edit broken/main.tf: delete the aws_s3_bucket_server_side_encryption_configuration.primary resource
-( cd broken && terraform init && terraform plan -out=tfplan && terraform show -json tfplan > plan.json )
+# from the repo root
+mkdir -p /tmp/broken && cp terraform/primitives/compliant-s3/*.tf /tmp/broken/
+# Edit /tmp/broken/main.tf: delete the aws_s3_bucket_server_side_encryption_configuration.primary resource
+( cd /tmp/broken && terraform init \
+    && terraform plan -out=tfplan -var="project_name=cgep-lab" -var="environment=dev" \
+    && terraform show -json tfplan > plan.json )
 
-conftest test --policy policies --namespace compliance.sc28_aws broken/plan.json
+conftest test --policy policies --namespace compliance.sc28_aws /tmp/broken/plan.json
 ```
 
 Output:
 
 ```
-FAIL - broken/plan.json - compliance.sc28_aws - [SC-28] aws_s3_bucket.primary: aws_s3_bucket has no matching aws_s3_bucket_server_side_encryption_configuration. Remediation: add one referencing this bucket.
+FAIL - /tmp/broken/plan.json - compliance.sc28_aws - [SC-28] aws_s3_bucket.primary: aws_s3_bucket has no matching aws_s3_bucket_server_side_encryption_configuration. Remediation: add one referencing this bucket.
 
 1 test, 0 passed, 0 warnings, 1 failure, 0 exceptions
 ```
 
-The exit code is non-zero. The deny message names the resource, the control, and the fix. A developer reading the failed PR knows exactly what to do.
+The exit code is non-zero, which is what makes this a *gate*: in CI, a non-zero exit fails the build and blocks the merge. The message names the resource, the control, and the fix, so the developer who broke it can fix it without anyone explaining what SC-28 means.
 
-### Step 9 The wrapper script
+### Step 9: The wrapper script
 
-The CI workflow in Lab 4.3 calls a single script. Build it now.
+Your CI workflow in Lab 4.3 calls one script. Build it now so CI has something stable to call. Open **`scripts/policy-gate.sh`** from the scaffold and paste:
 
 ```bash
 #!/usr/bin/env bash
 # scripts/policy-gate.sh
+# Usage: policy-gate.sh --workspace <path> [--policy <dir>]
+# Requires a saved tfplan inside the workspace (from terraform plan -out=tfplan).
 set -euo pipefail
 
 POLICY_DIR="policies"
@@ -300,18 +358,27 @@ done
 [[ -z "$WORKSPACE" ]] && { echo "Usage: $0 --workspace <path>" >&2; exit 2; }
 mkdir -p "$EVIDENCE_DIR"
 
-( cd "$WORKSPACE" && terraform show -json tfplan > "$WORKSPACE/plan.json" )
+# Write plan.json next to tfplan. Use -chdir so a relative WORKSPACE path
+# doesn't get doubled after a cd (a common bash footgun).
+terraform -chdir="$WORKSPACE" show -json tfplan > "$WORKSPACE/plan.json"
 
 EXIT=0
 {
   echo "["
   FIRST=1
-  for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws compliance.cm6 ; do
+  # AWS namespaces only. Including a GCP namespace here would "pass" with zero
+  # coverage on an AWS plan — the exact empty-pass lesson from Step 3.
+  for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws ; do
     [[ $FIRST -eq 1 ]] && FIRST=0 || printf ","
-    OUT=$(conftest test --policy "$POLICY_DIR" --namespace "$ns" --output=json "$WORKSPACE/plan.json" || true)
-    if echo "$OUT" | python3 -c 'import sys,json; d=json.load(sys.stdin); sys.exit(0 if all(len(r.get("failures") or [])==0 for r in d) else 1)'; then : ; else EXIT=1 ; fi
-    echo "$OUT"
+    # Capture JSON even when conftest exits non-zero; use that exit code for the gate.
+    set +e
+    OUT=$(conftest test --policy "$POLICY_DIR" --namespace "$ns" --output=json "$WORKSPACE/plan.json")
+    STATUS=$?
+    set -e
+    [[ $STATUS -eq 0 ]] || EXIT=1
+    printf '%s' "$OUT"
   done
+  echo
   echo "]"
 } > "$EVIDENCE_DIR/conftest-results.json"
 
@@ -321,36 +388,62 @@ fi
 exit $EXIT
 ```
 
-Key choices:
+Three choices in there are worth understanding, because you'll see the same patterns in every CI script you write:
 
-- `|| true` on each conftest call so a failure in one namespace doesn't abort the script before the others run.
-- `--output=json` so CI gets a machine-readable artifact.
-- A python3 one-liner for the pass/fail decision because portable JSON parsing in pure bash is masochism.
+- Capturing `STATUS` after each `conftest` call stops one namespace's failure from killing the script before the others run, so you collect *all* violations, not just the first.
+- `--output=json` makes the result a machine-readable artifact CI can store as evidence.
+- Pass/fail uses Conftest's own exit code. No extra JSON parser (Python, `jq`, etc.) is required — Conftest already exits non-zero when a namespace has failures.
+
+Run it both ways to produce your evidence:
+
+```bash
+# from the repo root
+mkdir -p evidence/lab-3-4
+
+# compliant: point at the Lab 2.3 workspace (needs tfplan from Step 2)
+bash scripts/policy-gate.sh --workspace terraform/primitives/compliant-s3
+cp evidence/lab-3-4/conftest-results.json evidence/lab-3-4/conftest-pass.json
+
+# failing: point at the broken copy from Step 8 (it already has its own tfplan)
+bash scripts/policy-gate.sh --workspace /tmp/broken
+cp evidence/lab-3-4/conftest-results.json evidence/lab-3-4/conftest-fail.json
+```
 
 ## Verification
 
-- Compliant plan: exit 0, zero failures across all four namespaces.
-- Broken plan: exit 1, at least one failure citing SC-28 with full metadata in the deny message.
-- `evidence/lab-3-4/conftest-results.json` exists in both runs.
+- Compliant plan: exit 0, zero failures across all namespaces.
+- Broken plan: exit 1, at least one SC-28 failure with the full remediation message.
+- `evidence/lab-3-4/conftest-results.json` exists after each run.
+
+Before you commit, update **`policies/README.md`** so it notes which file targets which cloud (the three GCP files from Lab 3.3 and the three `*_aws.rego` files from this lab).
+
+## Commit your work
+
+```bash
+# from the repo root
+git add policies/*_aws.rego policies/README.md scripts/policy-gate.sh evidence/lab-3-4
+git commit -m "Lab 3.4: AWS policy variants + Conftest gate + evidence"
+git push
+```
+
+## Cleanup
+
+Nothing to tear down in the cloud; this lab is all local evaluation. Delete the throwaway `/tmp/broken` folder when you're done. (If you generated a plan against live Lab 2.3 resources, none were applied, so there's nothing to destroy.)
 
 ## Portfolio submission checklist
 
-- [ ] `policies/` has both GCP and AWS variants for SC-28, AC-3, CM-6. Six files, three control IDs.
+- [ ] `policies/` holds GCP and AWS variants for SC-28, AC-3, CM-6 (six files, three control IDs).
 - [ ] `scripts/policy-gate.sh` committed and executable.
-- [ ] `evidence/lab-3-4/conftest-pass.json` and `evidence/lab-3-4/conftest-fail.json` captured.
+- [ ] `evidence/lab-3-4/conftest-pass.json` and `conftest-fail.json` captured.
 - [ ] `policies/README.md` notes which file targets which cloud.
 
 ## Troubleshooting
 
-- **`policies: no such file or directory`**. Conftest's `--policy` is a directory path, and it's resolved relative to your current shell. Always pass the absolute or canonically-relative path.
-- **`no policies matched`**. Your package declaration doesn't match the namespace you passed with `--namespace`. The package in the file must be the same string.
-- **A passing fixture fires anyway**. Plan JSON puts module-wrapped resources under `child_modules[]`. Recurse the same way the GCP rules do, or your library has gaps.
-- **Bucket name comparisons return undefined.** At plan time AWS resource IDs are unknown. Match by reference in `configuration.root_module.resources[].expressions.<arg>.references`, not by literal value in `planned_values`.
+- **`no policies matched`.** The `package` declared in your file doesn't match the `--namespace` string. They must be identical, character for character.
+- **`policies: no such file or directory`.** `--policy` is a directory path resolved from your current shell. Run from the repo root, or pass the full path.
+- **A bucket you expect to flag passes.** Module-wrapped resources sit under `child_modules[]`. Recurse the same way the GCP rules do, or the AWS rules will miss module output.
+- **Comparisons against bucket names come back undefined.** At plan time AWS IDs are unknown. Match by reference in `configuration...expressions.<arg>.references`, never by literal value.
 
-## Cleanup
+## How this feeds the rest of the course
 
-The Conftest gate is local. Nothing in the cloud to destroy beyond Lab 2.3.
-
-## How this feeds the capstone
-
-`scripts/policy-gate.sh` is the exact script CI calls in Lab 4.3. The capstone's GitHub Actions workflow shells out to this script with `--workspace ./terraform`, the plan is checked, the workflow goes green or red. Make this bulletproof here so you don't fight it later.
+`scripts/policy-gate.sh` is the exact script your CI calls in Lab 4.3. The capstone's GitHub Actions workflow runs it with `--workspace ./terraform`, and the build goes green or red on the result. Getting it solid here means it's one less thing to debug when the whole pipeline is running. Your six policies, three control IDs, become the same IDs your OSCAL component cites in Chapter 6, with the Conftest results as their evidence.

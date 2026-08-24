@@ -4,6 +4,8 @@ You've reached the capstone. Everything you've learned in this course (IaC, poli
 
 You ship the repo, you pass the capstone.
 
+This brief is the contract: it defines what's graded and how. For a walkthrough of *assembling* the repo from your lab artifacts, with a worked layout and a write-up scaffold, see the [Capstone Companion](07_02_capstone_companion.md).
+
 ## The on-ramp: labs are optional, encouraged, and the same skills
 
 The capstone tests the same skills the chapter labs taught. The labs are optional. They are also strongly encouraged. Every lab produces an artifact you can carry directly into your capstone repo.
