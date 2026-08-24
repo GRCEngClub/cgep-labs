@@ -1,76 +1,104 @@
 # Lab 6.1: Introduction to OSCAL
 
-OSCAL is NIST's machine-readable format for security controls, profiles, components, system security plans, and assessments. The point isn't the format. The point is that an assessor can traverse from a control catalog to a profile to a component to an evidence URI without ever talking to you. The audit becomes a graph traversal. This lab writes the smallest piece of that graph: one component definition, validated by `trestle`, with evidence links pointing at real signed objects in your vault.
+OSCAL is NIST's machine-readable format for security controls, profiles, components, and assessments. Don't get hung up on the format itself; the reason it exists is the interesting part. With OSCAL, an assessor can start at a control catalog, follow a link to a profile, follow another to a component, and follow one more to a piece of evidence, all without ever talking to you. The audit turns into a graph traversal. This lab writes the smallest real piece of that graph: one component definition, validated by a tool called `trestle`, with evidence links that point at the actual signed bundles in your vault.
 
-## Learning objectives
+For the GRC folks, this is your control narrative rewritten so a machine can read it and an assessor can verify it. For the technical folks, this is authoring structured JSON against a strict schema, where the unusual payoff is that your documentation becomes executable: every claim links to evidence that can be checked.
 
-- Author a valid OSCAL Component Definition for a Terraform module.
-- Author a minimal Profile selecting the controls the component implements.
-- Wire evidence URIs to objects in the Lab 2.5 vault, validate the whole chain with `trestle`.
+This is the documentation layer that ties the whole course together. Everything you built (the compliant module, the policies, the pipeline, the signed vault) gets described here in a way an outside assessor can traverse on their own.
 
-## Prerequisites
+## Before you begin
 
-- Python `>= 3.10`.
-- `pip install compliance-trestle` (NIST's OSCAL Python toolkit).
-- Lab 2.3 (or Lab 2.4) module on disk. We'll describe it in OSCAL.
-- Lab 2.5 vault exists, so evidence URIs resolve.
+If this is your first lab, set up [your tools](../getting-started/tools.md) and [your repo](../getting-started/repo-structure.md) first.
 
-## Estimated time & cost
+You need:
 
-- 60 to 75 minutes.
-- Free. OSCAL tooling is open source. No cloud calls beyond fetching the NIST 800-53 catalog.
+- **Python `>= 3.10`** and **compliance-trestle**, NIST's OSCAL Python toolkit. Install it with `pip install compliance-trestle`. For OSCAL background, NIST's official site is https://pages.nist.gov/OSCAL/.
+- The Lab 2.3 (or 2.4) module on disk, since you'll describe it in OSCAL.
+- For the optional traversal at the end, a signed bundle in your Lab 2.5 vault (produced by the Lab 4.4 pipeline). The authoring and validation themselves need no cloud at all.
 
-## Architecture
+## Time and cost
+
+- Time: 60 to 75 minutes.
+- Cost: free. The tooling is open source and the only network call fetches the public NIST catalog.
+
+## The five OSCAL models
+
+A quick map so the vocabulary doesn't trip you:
+
+| Model | What it describes | Built here? |
+|---|---|---|
+| **Catalog** | A library of controls (e.g., NIST 800-53 Rev 5). | No, you link to NIST's published one. |
+| **Profile** | A chosen subset of controls from one or more catalogs. | Yes, a minimal one. |
+| **Component Definition** | How a software component implements specific controls. | Yes, the centerpiece. |
+| System Security Plan (SSP) | A whole system's controls and components. | Capstone stretch goal. |
+| Assessment Plan / Results | What an auditor planned and found. | Out of scope. |
+
+You're building the middle two: a component definition that says "here's what my module does and here's the proof," and a profile that says "here are the controls I'm claiming."
+
+## Where these files live
 
 ```
-   Terraform module                        OSCAL                                Auditor
-   ────────────────                        ─────                                ───────
-   reference/lab-2-3/    ───describes───▶  component-definition.json
-   main.tf, etc.                           ├─ control-implementations            "show me your
-                                           │   source: NIST 800-53 catalog        SC-28 evidence"
-                                           ├─ implemented-requirements
-                                           │   sc-28, ac-3, au-3, cm-6
-                                           │   props: terraform-resource refs
-                                           │   links: rel=evidence, href=s3://
-                                           │
-                                           profile.json (selects sc-28, ac-3, ...)
-                                                                                  ▼
-                                                                           follows href into vault
-                                                                           runs verify-evidence.sh
-                                                                           sees CHAIN INTACT
+cgep-labs/
+├── oscal/                                 ← committed, capstone-shaped layout
+│   ├── components/
+│   │   └── compliant-s3.json              ← copied from trestle at the end
+│   ├── profiles/
+│   │   └── cge-p-minimum.json             ← copied from trestle at the end
+│   └── README.md
+├── evidence/lab-6-1/
+│   └── trestle-validate.txt               ← filled in when you validate
+└── .trestle-work/                         ← local authoring only (gitignored)
+    ├── component-definitions/compliant-s3-v1/component-definition.json
+    └── profiles/cge-p-minimum/profile.json
 ```
+
+### Scaffold this lab's empty files
+
+Run this once from the repo root (`cgep-labs`). It creates the committed layout up front; trestle will create its own working tree in the next step.
+
+```bash
+# from the repo root
+mkdir -p oscal/components oscal/profiles evidence/lab-6-1
+
+touch \
+  oscal/components/compliant-s3.json \
+  oscal/profiles/cge-p-minimum.json \
+  oscal/README.md
+
+grep -qxF '.trestle-work/' .gitignore || echo '.trestle-work/' >> .gitignore
+
+find oscal evidence/lab-6-1 -type f | sort
+```
+
+You will author inside `.trestle-work/` (trestle's native layout), then copy the finished JSON into the empty `oscal/...` files above.
 
 ## Step-by-step walkthrough
 
-### Concept: The five OSCAL models
+### Step 1: Initialize a trestle workspace
 
-| Model | What it describes | Built in this lab |
-|---|---|---|
-| **Catalog** | A library of controls (e.g., NIST 800-53 Rev 5). | No, we link to the NIST-published one. |
-| **Profile** | A subset of controls selected from one or more catalogs. | Yes, minimal. |
-| **Component Definition** | How a software component implements specific controls. | Yes, the centerpiece. |
-| System Security Plan (SSP) | A whole system's controls + components. | Stretch goal for capstone. |
-| Assessment Plan / Results | What the auditor planned, what the auditor found. | Out of scope. |
-
-### Step 1 Initialize a trestle workspace
+Work under a temporary authoring directory so trestle's full layout doesn't collide with the simpler `oscal/components/` and `oscal/profiles/` paths your capstone expects. You'll copy the finished JSON into those paths at the end.
 
 ```bash
+# from the repo root
 pip install compliance-trestle
-mkdir lab-6-1 && cd lab-6-1
+mkdir -p .trestle-work && cd .trestle-work
 trestle init
 ```
 
-You'll get an OSCAL-shaped directory: `catalogs/`, `profiles/`, `component-definitions/`, etc.
+Trestle lays down an OSCAL-shaped directory: `catalogs/`, `profiles/`, `component-definitions/`, and so on. It's opinionated about structure, which is helpful, because the schema is strict and trestle keeps you inside the lines.
 
-### Step 2 Create the component definition skeleton
+### Step 2: Create the component-definition skeleton
 
 ```bash
+# still inside .trestle-work/
 trestle create -t component-definition -o compliant-s3-v1 -x json
 ```
 
-Trestle generates a minimal valid skeleton. Open `component-definitions/compliant-s3-v1/component-definition.json` and replace it with the real document.
+This generates a minimal valid skeleton at **`.trestle-work/component-definitions/compliant-s3-v1/component-definition.json`**. Open that file and replace it with the real document in the next step.
 
-### Step 3 The component definition
+### Step 3: Write the component definition
+
+Open **`.trestle-work/component-definitions/compliant-s3-v1/component-definition.json`**. This document describes your `compliant-s3` module (the one at `terraform/primitives/compliant-s3`) in OSCAL terms: which controls it implements, which Terraform resource enforces each, and where the evidence lives.
 
 ```json
 {
@@ -130,32 +158,34 @@ Trestle generates a minimal valid skeleton. Open `component-definitions/complian
 }
 ```
 
-Add similar `implemented-requirements` for `ac-3`, `au-3`, and `cm-6`. The full reference is in `reference/lab-6-1/component-definitions/compliant-s3-v1/component-definition.json`.
+Then add the same shape of `implemented-requirements` block for `ac-3`, `au-3`, and `cm-6`, each naming the Terraform resource that enforces it and linking to the same signed bundle.
 
-> **Generate UUIDs the right way.** OSCAL requires v4 UUIDs (`xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx` where `y` is 8/9/a/b). Don't hand-write them. Run `python3 -c "import uuid; print(uuid.uuid4())"` per UUID. `trestle validate` rejects the wrong format with a regex error; this catches you the first time you try.
+Read the `sc-28` block slowly, because it's the whole idea in miniature. The `control-id` says which control. The `description` says how the module satisfies it. The `terraform-resource` prop says exactly which line of code does it. And the `links[rel=evidence]` href says where the proof lives. Four facts, machine-readable, and the last one is a live pointer into your vault.
 
-### Step 4 Validate
+> **Generate UUIDs the right way.** OSCAL requires version-4 UUIDs (the `4` and the `8/9/a/b` in specific positions matter). Don't hand-write them, or `trestle validate` will reject them with a regex error. You already need Python for trestle, so this is fine: `python3 -c "import uuid; print(uuid.uuid4())"`. On macOS/Linux you can also use `uuidgen | tr '[:upper:]' '[:lower:]'`.
+
+### Step 4: Validate the component
 
 ```bash
 trestle validate -f component-definitions/compliant-s3-v1/component-definition.json
 ```
 
-Expected:
+You want:
 
 ```
 VALID: Model .../component-definition.json passed the Validator
-to confirm the model passes all registered validation tests.
 ```
 
-### Step 5 The Profile
+If it fails, the message usually points right at the missing or malformed field. The schema is strict but verbose, which works in your favor here.
 
-A profile selects which controls from the catalog this component covers.
+### Step 5: Write the profile
+
+A profile selects which catalog controls you're claiming. Create the skeleton, then open **`.trestle-work/profiles/cge-p-minimum/profile.json`** and replace its contents:
 
 ```bash
+# still inside .trestle-work/
 trestle create -t profile -o cge-p-minimum -x json
 ```
-
-Edit `profiles/cge-p-minimum/profile.json`:
 
 ```json
 {
@@ -180,65 +210,77 @@ Edit `profiles/cge-p-minimum/profile.json`:
 }
 ```
 
-Validate:
-
 ```bash
 trestle validate -f profiles/cge-p-minimum/profile.json
 ```
 
-### Step 6 Resolve the profile against the catalog
+### Step 6: Resolve the profile against the catalog
 
 ```bash
 trestle profile-resolve -n cge-p-minimum -o cge-p-minimum-resolved
 ```
 
-Trestle fetches the NIST catalog, applies your selection, and writes a resolved profile, the flat list of controls your component is responsible for. This is what an SSP would import.
+Trestle fetches the NIST catalog, applies your selection, and writes out a *resolved* profile: the flat list of controls you're responsible for, with their full text pulled in from the catalog. This is the artifact a System Security Plan would import. You've turned "I cover four controls" into a self-contained, machine-readable document.
 
-### Step 7 Demonstrate the traversal
+### Step 7: Walk the traversal yourself
 
-Pick `sc-28` in your component definition. Follow the `links[rel=evidence].href` to the vault. Run Lab 4.4's `verify-evidence.sh`:
+This is the part that makes OSCAL click. Take the `sc-28` requirement, follow its `links[rel=evidence].href` into the vault, and run the verify script from Lab 4.4:
+
+> The command below uses `--profile default`. If you named your AWS CLI profile something else in Lab 2.3, replace `default` with that name.
 
 ```bash
-EVIDENCE_VAULT=<your-vault> bash scripts/verify-evidence.sh <run_id>
+# from the repo root; reuse VAULT/RUN_ID from Lab 4.4 if you still have them
+EVIDENCE_VAULT="$VAULT" bash scripts/verify-evidence.sh "$RUN_ID" --profile default
 ```
 
-`CHAIN INTACT`. The OSCAL document, the catalog reference, the implementation statement, the evidence URI, and the signed bundle in the vault are now linked. An assessor reading the OSCAL can verify your control without you in the room.
+When it prints `CHAIN INTACT`, you've just done what an assessor does: started from a control claim in a document, followed a link to a real artifact, and cryptographically confirmed the artifact is authentic and unaltered. Nobody had to log into a console, and you didn't have to be in the room. (If you're doing this lab standalone without a vault bundle handy, the authoring and validation in Steps 1 through 6 still stand on their own; this step is the live demonstration of the link resolving.)
 
 ## Verification
 
-- `trestle validate` returns `VALID` for the component definition AND the profile.
+- `trestle validate` returns `VALID` for both the component definition and the profile.
 - `trestle profile-resolve` produces a resolved profile.
-- At least one evidence URI in the component definition resolves to a real signed object in your vault.
+- At least one evidence URI in the component definition points at a real signed object in your vault.
+
+## Capture and commit
+
+You're still inside `.trestle-work/`. Validate, then overwrite the empty scaffold files under `oscal/` at the repo root:
+
+```bash
+trestle validate -f component-definitions/compliant-s3-v1/component-definition.json \
+  > ../evidence/lab-6-1/trestle-validate.txt 2>&1
+
+cp component-definitions/compliant-s3-v1/component-definition.json ../oscal/components/compliant-s3.json
+cp profiles/cge-p-minimum/profile.json ../oscal/profiles/cge-p-minimum.json
+
+cd ..   # back to cgep-labs (repo root)
+ls oscal/components oscal/profiles evidence/lab-6-1
+
+# Fill the scaffolded README: which module each component describes and where its evidence lives
+# Open oscal/README.md and write a short note, then:
+git add oscal evidence/lab-6-1 .gitignore
+git commit -m "Lab 6.1: OSCAL component definition + profile + validation"
+git push
+```
 
 ## Portfolio submission checklist
 
 - [ ] `oscal/components/<your-component>.json` validated by trestle.
 - [ ] `oscal/profiles/cge-p-minimum.json` validated.
-- [ ] `evidence/lab-6-1/trestle-validate.txt`, the output of `trestle validate`, captured.
-- [ ] README in `oscal/` explaining which module each component describes and where the evidence lives.
+- [ ] `evidence/lab-6-1/trestle-validate.txt` captured.
+- [ ] A README in `oscal/` saying which module each component describes and where its evidence lives.
 
 ## Troubleshooting
 
-- **`string does not match regex` on UUIDs.** OSCAL strictly requires v4. Use `python3 -c "import uuid; print(uuid.uuid4())"`. Don't hand-write.
-- **`trestle validate`** fails on missing required fields. Use `trestle describe -t component-definition -n <name>` to inspect the schema requirements; the schema is strict and helpfully verbose.
-- **Evidence URIs that don't resolve.** OSCAL itself doesn't validate that hrefs resolve. A broken URI is silently a useless attestation. Wire your CI to verify the references during the resolve step, or write a small script.
-- **Catalog imports fail.** NIST's GitHub URLs sometimes change. Anchor to a tag (`/blob/v5.0.0/`) instead of `main` if you want stability.
-- **Different OSCAL versions don't compose.** Catalog and profile and component must all share an `oscal-version`. Trestle pins to whatever version it installed; check with `trestle version`.
+- **`string does not match regex` on a UUID.** OSCAL requires v4 UUIDs. Generate them with `python3 -c "import uuid; print(uuid.uuid4())"` (or `uuidgen`), never by hand.
+- **Validation fails on a missing field.** Run `trestle describe -t component-definition -n <name>` to see what the schema expects; it's strict but the errors are specific.
+- **An evidence URI that doesn't resolve.** OSCAL won't check that hrefs actually resolve, so a broken link is a silently useless attestation. Wire a small check into CI (or your resolve step) that confirms each evidence href points at a real vault object.
+- **Catalog import fails.** NIST's `main`-branch URLs occasionally move. Pin to a tag (e.g., `/v5.0.0/`) for stability.
+- **Version mismatch.** The catalog, profile, and component must share an `oscal-version`. Check what trestle installed with `trestle version` and match it.
 
 ## Cleanup
 
-OSCAL is YAML/JSON in your repo. There's nothing in the cloud to destroy. Commit and move on.
+OSCAL is just JSON in your repo. There's nothing in the cloud to tear down. Commit and move on.
 
 ## How this feeds the capstone
 
-This component definition is the OSCAL layer of your capstone. The capstone's repo holds:
-
-```
-oscal/
-  components/<your-component>.json      # describes what you built
-  profiles/cge-p-minimum.json           # selects the controls you implement
-```
-
-The component definition's `links[rel=evidence].href` points at the latest signed bundle in your vault, written by the Lab 4.3+4.4 pipeline. The chain ends in the vault.
-
-A grader reading your `WRITEUP.md` is told to start at `oscal/components/`. They follow the chain to the vault. They run `verify-evidence.sh`. They see `CHAIN INTACT`. That's the engineered assurance demonstration the capstone is asking for. You just shipped it.
+This component definition *is* your capstone's OSCAL layer. The capstone repo carries `oscal/components/<your-component>.json` (what you built) and `oscal/profiles/cge-p-minimum.json` (the controls you claim), and the component's evidence links point at the latest signed bundle in your vault, written by your Lab 4.3 + 4.4 pipeline. The chain ends in the vault. A grader is told to start at `oscal/components/`, follow the links, run `verify-evidence.sh`, and see `CHAIN INTACT`. That single traversal is the entire course demonstrated end to end, and you've now built every link in it.

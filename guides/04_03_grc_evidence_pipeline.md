@@ -1,48 +1,88 @@
 # Lab 4.3: Building a GRC Evidence Pipeline (AWS + GitHub Actions)
 
-The local Conftest gate from Lab 3.4 catches violations on your laptop. CI catches them across the whole team. This lab wires the gate into GitHub Actions, runs it on every pull request, and uploads a named evidence artifact for every run. The YAML file you commit IS your CM-3 + CM-6 + CA-2 + RA-5 + AU-9 evidence.
+The Conftest gate from Lab 3.4 catches violations on your laptop. That's good for you, but it does nothing for a teammate who skips it. This lab moves the gate to where nobody can skip it: GitHub's servers, running automatically on every pull request. The workflow you write plans your Terraform, runs your policies, scans for misconfigurations, and saves a named evidence file for every single run. The result is a control that enforces itself and documents itself at the same time.
 
-## Learning objectives
+This is the first lab where the "engineering" in GRC Engineering really shows. For the GRC folks, you're building continuous monitoring that produces an audit trail without anyone collecting it by hand. For the technical folks, this is a CI pipeline, with the unusual goal that its *output* is compliance evidence, not just a green check.
 
-- Wire AWS OIDC trust to a GitHub Actions workflow so the workflow assumes an IAM role without long-lived keys.
-- Run terraform plan, Conftest, and tfsec on every PR; fail closed on any high-severity finding.
-- Upload a named evidence artifact (`grc-evidence-<run-id>`) attached to every run.
+A note for anyone new to CI: continuous integration just means automation that runs on a server whenever you push code. GitHub Actions is GitHub's version. You describe the steps in a YAML file, commit it, and GitHub runs those steps for you on every pull request. That's the whole idea.
 
-## Prerequisites
+## Before you begin
 
-- A GitHub repository you own. The reference implementation is wired to the [`cgep-app-starter`](https://github.com/GRCEngClub/cgep-app-starter).
-- AWS account with permission to create an IAM OIDC provider and an IAM role.
-- Lab 2.3, Lab 3.3, Lab 3.4 artifacts (Terraform, policies, `policy-gate.sh`) committed into the repo.
-- AWS CLI v2 with a working profile.
+If this is your first lab, set up [your tools](../getting-started/tools.md) and [your repo](../getting-started/repo-structure.md) first. This lab builds on Labs 2.3, 3.3, and 3.4, so those need to be committed.
 
-## Estimated time & cost
+New tool for this lab:
 
-- 60 to 90 minutes.
-- Cost: free. GitHub Actions free tier covers this. AWS cost is the same as Lab 2.3 since this workflow only plans.
+- **GitHub CLI (`gh`)**, for creating pull requests and setting repo variables from the terminal. Install from the official page: https://cli.github.com/. Authenticate once with `gh auth login`.
+
+Two tools run *inside* the workflow on GitHub's servers, so you don't install them locally; the workflow downloads them:
+
+- **Conftest** (you already know it from Lab 3.4).
+- **tfsec**, a static scanner that flags risky Terraform. Note that tfsec is now in maintenance mode, folded into **Trivy** (`trivy config` is the supported successor, and the old check IDs carry over). The lab uses tfsec because it's small and pinnable; everything here works the same if you later switch the scan step to Trivy.
+
+You also need an AWS account where you can create an IAM role and an OIDC provider. Commands below use `--profile default`; if you named your profile something else in Lab 2.3, replace `default` with that name.
+
+## Time and cost
+
+- Time: 60 to 90 minutes. Budget extra for the OIDC setup; it's the fiddly part.
+- Cost: free. GitHub Actions' free tier covers this, and the workflow only plans, so AWS costs nothing.
 
 ## Architecture
 
 ```
-  PR opened  ───▶  workflow run
+  PR opened  ───▶  workflow runs on GitHub's servers
                        │
-                       ├── Configure AWS creds (OIDC, no keys on disk)
+                       ├── Get AWS credentials via OIDC   (no keys stored anywhere)
                        ├── terraform init / plan
-                       ├── Conftest gate          (fails closed on policy failures)
-                       ├── tfsec scan             (fails closed on high/critical)
-                       ├── Upload evidence artifact (plan.json, conftest-results.json, tfsec.sarif)
-                       └── Comment on PR with summary
+                       ├── Conftest gate                  (fails the build on a policy violation)
+                       ├── tfsec scan                     (fails on high/critical findings)
+                       ├── Upload evidence artifact        (plan.json, conftest-results.json, tfsec.sarif)
+                       └── (Lab 4.4 adds: sign + store in the vault)
 ```
 
-Lab 4.4 adds Cosign signing and uploads the bundle to the Lab 2.5 vault.
+## The OIDC idea, in plain language
+
+The workflow needs to read your AWS account to run a plan. The old way was to paste an AWS access key into GitHub's secrets. That's a long-lived credential sitting in a settings page, and if it leaks, someone has standing access to your account.
+
+OIDC replaces that with something better. GitHub and AWS establish a trust relationship once. Then, on each run, GitHub hands AWS a short-lived token that proves "this is a workflow from *this specific repository*," and AWS gives back temporary credentials that expire when the job ends. No secret is stored, nothing outlives the run, and the trust is scoped to one repo. You set this up once and forget it.
+
+## Where these files live
+
+```
+cgep-labs/
+├── terraform/primitives/oidc-trust/
+│   └── main.tf                         ← OIDC provider + IAM role
+├── .github/workflows/
+│   └── grc-gate.yml                    ← the CI pipeline
+└── evidence/lab-4-3/                   ← filled by the workflow artifact
+    ├── plan.json
+    ├── plan.txt
+    ├── conftest-results.json
+    └── tfsec.sarif
+```
+
+### Scaffold this lab's empty files
+
+Run this once from the repo root (`cgep-labs`). It creates every path in the diagram above as an empty file so the later steps are "open and paste," not "guess where this goes."
+
+```bash
+# from the repo root
+mkdir -p terraform/primitives/oidc-trust .github/workflows evidence/lab-4-3
+
+touch \
+  terraform/primitives/oidc-trust/main.tf \
+  .github/workflows/grc-gate.yml
+
+find terraform/primitives/oidc-trust .github/workflows evidence/lab-4-3 -type f | sort
+```
 
 ## Step-by-step walkthrough
 
-### Step 1 Set up GitHub OIDC trust with AWS
+### Step 1: Create the OIDC trust in AWS
 
-A small Terraform module creates the OIDC provider and a read-only role scoped to your repo.
+This small Terraform creates the OIDC provider and a read-only role bound to your repository. Put it in a primitive, since you apply it once. Open **`terraform/primitives/oidc-trust/main.tf`** from the scaffold and paste:
 
 ```hcl
-# oidc/main.tf
+# terraform/primitives/oidc-trust/main.tf
 terraform {
   required_version = ">= 1.6"
   required_providers {
@@ -86,33 +126,43 @@ resource "aws_iam_role_policy_attachment" "readonly" {
 output "role_arn" { value = aws_iam_role.grc_gate.arn }
 ```
 
-Apply:
+Apply it. Substitute your GitHub org (or username) and the `cgep-labs` repo name:
 
 ```bash
-cd oidc
+# from the repo root
+cd terraform/primitives/oidc-trust
+eval "$(aws configure export-credentials --profile default --format env)"  # if you use SSO
 terraform init
-terraform apply -var=github_org=YourOrg -var=github_repo=YourRepo
+terraform apply -var=github_org=<your-github-org> -var=github_repo=cgep-labs
+ROLE_ARN=$(terraform output -raw role_arn)
+cd ../../..
 ```
 
-If the OIDC provider already exists in the account (some other automation created it), import:
+If the account already has a GitHub OIDC provider (some other automation may have created one), Terraform will error on the duplicate. Import it instead of recreating:
 
 ```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --profile default)
 terraform import aws_iam_openid_connect_provider.github \
-  arn:aws:iam::ACCOUNT:oidc-provider/token.actions.githubusercontent.com
-terraform apply -var=github_org=YourOrg -var=github_repo=YourRepo
+  "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
+terraform apply -var=github_org=<your-github-org> -var=github_repo=cgep-labs
+ROLE_ARN=$(terraform output -raw role_arn)
 ```
 
-The `StringLike` on `sub` keeps this role bound to one specific repository. Don't loosen it. A role trusted by `repo:*:*` is trusted by every public repo on GitHub.
+> The `StringLike` condition on `sub` is what binds this role to one repository. Do not loosen it to `repo:*:*`. A role trusted by every repo on GitHub is a role trusted by every attacker who can open a public repo. This single line is the difference between scoped trust and an open door.
 
-### Step 2 Add the role ARN as a repo variable
+### Step 2: Tell GitHub which role to assume
+
+Save the role ARN as a repo variable so the workflow can read it. Use the `$ROLE_ARN` you just captured (no copy-paste from the console):
 
 ```bash
 gh variable set AWS_ROLE_ARN \
-  --body "arn:aws:iam::ACCOUNT:role/cgep-grc-gate" \
-  --repo YourOrg/YourRepo
+  --body "$ROLE_ARN" \
+  --repo <your-github-org>/cgep-labs
 ```
 
-### Step 3 Write the workflow
+### Step 3: Write the workflow
+
+This is the heart of the lab. Open **`.github/workflows/grc-gate.yml`** from the scaffold and paste. The paths here point at your `cgep-labs` layout (the compliant-s3 workspace, the root-level `policies/`, and a per-lab evidence folder).
 
 ```yaml
 # .github/workflows/grc-gate.yml
@@ -130,7 +180,7 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  TF_WORKING_DIR: terraform
+  TF_WORKING_DIR: terraform/primitives/compliant-s3
 
 jobs:
   grc-gate:
@@ -165,147 +215,135 @@ jobs:
         run: |
           terraform init -input=false
           terraform validate
-          terraform plan -out=tfplan -no-color | tee plan.txt
+          # Same vars as Lab 2.3 / 3.4. -input=false means missing vars fail the job
+          # instead of hanging on an interactive prompt the runner can't answer.
+          terraform plan -out=tfplan -input=false -no-color \
+            -var="project_name=cgep-lab" -var="environment=dev" | tee plan.txt
           terraform show -json tfplan > plan.json
 
       - name: Conftest policy gate
         id: conftest
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          mkdir -p ../evidence
+          mkdir -p evidence/lab-4-3
+          EXIT=0
           {
             echo "["
             FIRST=1
-            for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws compliance.cm6 ; do
+            # AWS namespaces only (same set as scripts/policy-gate.sh from Lab 3.4).
+            for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws ; do
               [[ $FIRST -eq 1 ]] && FIRST=0 || printf ","
-              conftest test --policy ../policies --namespace "$ns" --output=json plan.json || true
+              set +e
+              OUT=$(conftest test --policy policies --namespace "$ns" --output=json "$TF_WORKING_DIR/plan.json")
+              STATUS=$?
+              set -e
+              [[ $STATUS -eq 0 ]] || EXIT=1
+              printf '%s' "$OUT"
             done
+            echo
             echo "]"
-          } > ../evidence/conftest-results.json
-          python3 -c '
-          import json, sys
-          d = json.load(open("../evidence/conftest-results.json"))
-          fails = sum(len(r.get("failures") or []) for results in d for r in results)
-          print(f"conftest failures: {fails}")
-          sys.exit(0 if fails == 0 else 1)
-          '
+          } > evidence/lab-4-3/conftest-results.json
+          if [[ $EXIT -eq 0 ]]; then echo "conftest: PASS"; else echo "conftest: FAIL"; exit 1; fi
 
       - name: tfsec scan
         id: tfsec
         if: always()
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          tfsec . --format sarif --out ../evidence/tfsec.sarif || true
-          python3 -c '
-          import json, sys
-          d = json.load(open("../evidence/tfsec.sarif"))
-          high = sum(
-              1 for run in d.get("runs", [])
-              for r in run.get("results", [])
-              if (r.get("level") or "").lower() in ("error","critical","high")
-          )
-          print(f"tfsec high+critical: {high}")
-          sys.exit(0 if high == 0 else 1)
-          '
+          # Write SARIF for the artifact, then re-run with a severity floor so
+          # tfsec's own exit code is the gate (no JSON parsing required).
+          tfsec "$TF_WORKING_DIR" --format sarif --out evidence/lab-4-3/tfsec.sarif || true
+          tfsec "$TF_WORKING_DIR" --minimum-severity HIGH
 
       - name: Copy plan into evidence
         if: always()
         run: |
-          cp ${{ env.TF_WORKING_DIR }}/plan.json evidence/plan.json
-          cp ${{ env.TF_WORKING_DIR }}/plan.txt  evidence/plan.txt
+          cp "$TF_WORKING_DIR"/plan.json evidence/lab-4-3/plan.json
+          cp "$TF_WORKING_DIR"/plan.txt  evidence/lab-4-3/plan.txt
 
       - name: Upload evidence artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: grc-evidence-${{ github.run_id }}
-          path: evidence/
+          path: evidence/lab-4-3/
           retention-days: 90
 ```
 
-A few specific choices worth understanding:
+Four choices in this file are worth understanding, because they're the difference between a workflow that works and one that fails in confusing ways:
 
-- **`permissions: id-token: write`** is required for `aws-actions/configure-aws-credentials` to mint an OIDC token. Without it, OIDC silently fails.
-- **`if: always()`** on the tfsec scan and the upload step. Without this, a Conftest failure aborts the job before evidence is captured. The whole point of CI evidence is that it's preserved on failure.
-- **`|| true`** after the conftest and tfsec calls. The tools exit non-zero on findings; we want the JSON output regardless. The pass/fail decision is made by the python3 inline checks that follow.
-- **Pinned versions** on every action. Floating tags drift. Pin them.
+- **`permissions: id-token: write`** is what lets the credentials step mint an OIDC token. Leave it out and OIDC fails silently with a misleading error. This is the single most common first-run problem.
+- **`if: always()`** on the scan, copy, and upload steps. Without it, a Conftest failure ends the job immediately and you lose the evidence. The entire value of CI evidence is that it survives the failure it documents, so these steps must run even after a gate fails.
+- **Tool-native exit codes for the gate.** Conftest exits non-zero on policy failures; `tfsec --minimum-severity HIGH` exits non-zero on high/critical findings. The SARIF/`--output=json` writes are for the evidence artifact; the tools themselves decide pass/fail. No Python (or other JSON parser) is required on the runner.
+- **Pinned versions** on every action and download (`@v4`, `v0.50.0`, `v1.28.14`). Floating tags change under you. For supply-chain safety, the more cautious choice is pinning third-party actions to a specific commit SHA rather than a moving tag.
 
-### Step 4 Open a PR and watch it run
+### Step 4: Open a PR and watch it run
 
 ```bash
+# from the repo root
 git checkout -b add-grc-gate
-git add .github/workflows/grc-gate.yml policies/ scripts/ oidc/
+git add .github/workflows/grc-gate.yml policies/ scripts/ terraform/primitives/oidc-trust/
 git commit -m "Add GRC evidence pipeline"
 git push -u origin add-grc-gate
 gh pr create --title "Add GRC evidence pipeline" --body "Reference pipeline."
 ```
 
-The workflow fires immediately. Watch:
+The workflow fires the moment the PR opens. Follow it live:
 
 ```bash
 gh run list --limit 3
 gh run watch
 ```
 
-Reference run from the [`cgep-app-starter`](https://github.com/GRCEngClub/cgep-app-starter) demo:
+If your Lab 2.3 code is compliant, the gates pass and the run goes green. If you point this at deliberately broken infrastructure (next step), you'll see output like `conftest failures: 5`. Either way, an evidence artifact named `grc-evidence-<run-id>` is attached to the run, holding `plan.json`, `conftest-results.json`, `tfsec.sarif`, and the human-readable `plan.txt`.
 
-```
-conftest failures: 5
-tfsec high+critical: 12
-```
+### Step 5: The two-PR demonstration
 
-Both gates fired. The starter has eight named gaps, so this is the expected outcome. The evidence artifact `grc-evidence-<run-id>` is attached to the run with `plan.json`, `conftest-results.json`, `tfsec.sarif`, and the human-readable `plan.txt`.
+Your capstone wants proof the gate actually blocks bad code, which means your repo history needs one PR that failed and one that passed.
 
-### Step 5 The two-PR demonstration
+1. **Red PR.** Branch off, introduce a violation (delete the `aws_s3_bucket_server_side_encryption_configuration`, or set `block_public_acls = false`), and open it as a PR. The workflow runs, Conftest fails, and with branch protection on, the merge is blocked.
+2. **Green PR.** Fix or revert the change. The workflow runs again, passes, and the PR merges.
 
-The capstone wants both a green and a red PR in your repo's history. To produce them:
+Both runs leave evidence artifacts in the Actions history. Both URLs go in your capstone write-up. That pair, a block and a pass, is the clearest possible demonstration that the control works.
 
-1. **Red PR**: open a branch that introduces a violation (delete an `aws_s3_bucket_server_side_encryption_configuration`, or pass `block_public_acls = false`). Open it as a PR. The workflow runs, Conftest fails, the merge is blocked.
-2. **Green PR**: revert or fix that change. The workflow runs again, Conftest passes, the PR merges.
+### The point: the YAML file is itself evidence
 
-Both runs leave evidence artifacts in the workflow history. Both URLs go in your capstone write-up.
+This is the idea to carry forward. Every meaningful line in this workflow maps to a control:
 
-### Takeaway: The YAML file is itself evidence
-
-Every line in `.github/workflows/grc-gate.yml` is a control statement.
-
-| Workflow content | NIST control |
+| What's in the workflow | NIST control |
 |---|---|
 | `on: pull_request` plus branch protection requiring this check | CM-3 (configuration change control) |
-| `default_tags` enforced via Conftest in this same workflow | CM-6 (configuration settings) |
-| The workflow itself is a continuous monitoring assessment | CA-2 (control assessments), CA-7 (continuous monitoring) |
-| `tfsec` scanning every change | RA-5 (vulnerability monitoring and scanning) |
-| Workflow run history retained, evidence artifacts retained 90 days, signed in Lab 4.4 | AU-9 (protection of audit information) |
+| Required tags enforced through Conftest in this same run | CM-6 (configuration settings) |
+| The workflow running on every change is itself an assessment | CA-2, CA-7 (assessment, continuous monitoring) |
+| `tfsec` scanning every change | RA-5 (vulnerability scanning) |
+| Run history and evidence retained (signed in Lab 4.4) | AU-9 (protection of audit information) |
 
-The workflow file is checked in. The history is preserved. An assessor traversing the OSCAL component you write in Lab 6.1 follows an evidence URI that points at this workflow's run output.
+The file is committed. The history is preserved. In Chapter 6, the OSCAL component you write points an evidence link straight at this workflow's run output. The auditor follows the link instead of asking you for a screenshot.
 
 ## Verification
 
-- A PR triggers the workflow.
-- The workflow run is visible in the Actions tab.
-- An evidence artifact `grc-evidence-<run-id>` is attached to the run with `plan.json`, `conftest-results.json`, `tfsec.sarif`, `plan.txt`.
-- Compliant code: workflow ends successful. Non-compliant code: workflow fails with named control IDs in the Conftest output.
+- Opening a PR triggers the workflow, visible in the Actions tab.
+- An artifact `grc-evidence-<run-id>` is attached with `plan.json`, `conftest-results.json`, `tfsec.sarif`, and `plan.txt`.
+- Compliant code ends green; non-compliant code fails with named control IDs in the Conftest output.
 
 ## Portfolio submission checklist
 
-- [ ] `oidc/` Terraform module that creates the OIDC provider + role, committed to the repo.
+- [ ] `terraform/primitives/oidc-trust/` creates the OIDC provider and role.
 - [ ] `.github/workflows/grc-gate.yml` committed.
 - [ ] `vars.AWS_ROLE_ARN` set in repo variables.
-- [ ] At least one workflow run visible in the Actions tab.
-- [ ] One green PR and one red PR in repo history (capstone requirement).
+- [ ] At least one workflow run in the Actions tab.
+- [ ] One green PR and one red PR in the repo history (capstone requirement).
 
 ## Troubleshooting
 
-- **`Error: Could not assume role with OIDC: invalid identity token`**. The `sub` condition in the trust policy doesn't match. Check the exact format: `repo:OWNER/REPO:ref:refs/heads/BRANCH` for branch pushes, `repo:OWNER/REPO:pull_request` for PR runs. Use `StringLike` with `repo:OWNER/REPO:*` for catch-all.
-- **`Permission denied`** on terraform init. The role needs read on the state backend (typically S3 + DynamoDB). `ReadOnlyAccess` covers this. For a real apply pipeline, you'd attach a more targeted policy.
-- **Conftest finds no policies**. The path passed via `--policy` is interpreted relative to the working directory of the step. Always pass an absolute or canonically-relative path.
-- **tfsec false positives**. Add a `.tfsec/config.yml` in your repo to suppress specific rule IDs with a justification comment. Don't use `--exclude` flags scattered through the workflow; centralize the exclusions.
-- **Artifact retention**. GitHub default is 90 days. For real compliance evidence, set `retention-days: 365` and copy to your Lab 2.5 vault on every successful run (Lab 4.4 wires this up).
+- **`Could not assume role with OIDC: invalid identity token`.** The `sub` condition doesn't match the run. For PR runs the subject is `repo:OWNER/REPO:pull_request`; the `StringLike` with `repo:OWNER/REPO:*` covers both PR and branch runs.
+- **`Permission denied` on terraform init.** The role needs read access to your state backend. `ReadOnlyAccess` covers a plan-only pipeline; a real apply pipeline needs a narrower, write-capable policy.
+- **Conftest finds no policies.** `--policy` is resolved from the step's working directory. The workflow above runs the gate from the repo root and passes `policies`, so don't add a `working-directory` to that step.
+- **OIDC fails even though the role exists.** Almost always the missing `id-token: write` permission. Check that block first.
+- **tfsec noise.** Suppress specific rule IDs in a `.tfsec/config.yml` with a justifying comment rather than scattering `--exclude` flags. If you migrate to Trivy, the same IDs work with a `.trivyignore` file.
 
 ## Cleanup
 
-Delete test branches. The workflow file stays; it's the deliverable. The IAM role and OIDC provider stay; they're free.
+Delete the test branches. Keep the workflow file (it's the deliverable) and the IAM role and OIDC provider (they're free and you'll reuse them). If you want them gone, `terraform destroy` in `terraform/primitives/oidc-trust/`.
 
-## How this feeds the capstone
+## How this feeds the rest of the course
 
-This is the capstone's pipeline. In Lab 4.4 we add the Cosign signing step and the upload to your Lab 2.5 vault. In Lab 6.1 your OSCAL component's evidence URIs point at signed objects in the vault, which were written by this workflow. The full chain is: PR opened, gate runs, evidence signed, evidence stored, OSCAL points at it, assessor traverses without you in the room.
+This is your capstone's pipeline. In Lab 4.4 you add a Cosign signing step and an upload to the Lab 2.5 vault, completing the chain of custody. In Chapter 6 your OSCAL component's evidence links point at signed objects this workflow produced. The full arc: a PR opens, the gate runs, evidence is captured and signed, the evidence lands in the immutable vault, and an assessor follows the OSCAL link to it, all without you in the room.

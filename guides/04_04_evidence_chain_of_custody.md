@@ -1,65 +1,115 @@
-# Lab 4.4: Evidence Management & Chain of Custody (AWS)
+# Lab 4.4: Evidence Management and Chain of Custody (AWS)
 
-You have a pipeline. You have an immutable vault. This lab connects them with cryptographic signing so the evidence in the vault is provably yours, provably untampered, and provably timestamped. The auditor doesn't need to trust you. They verify.
+You have a pipeline that produces evidence (Lab 4.3) and a vault that can't be tampered with (Lab 2.5). This lab joins them with cryptographic signing, so the evidence isn't just stored, it's provably yours, provably unchanged, and provably timestamped. The shift in mindset is the whole lesson: the auditor no longer has to *trust* you. They run a command and the math tells them whether the chain is intact.
 
-## Learning objectives
+For the GRC folks, this is chain of custody turned from a paragraph in a policy into something a script verifies in seconds. For the technical folks, this is keyless signing with Sigstore wired into CI, in service of a property you may never have had to engineer before: evidence that defends itself.
 
-- Define chain of custody as four properties: authenticity, integrity, timeliness, completeness.
-- Extend the Lab 4.3 pipeline with keyless Cosign signing using GitHub OIDC.
-- Upload signed bundles to the Lab 2.5 vault and verify the full chain end-to-end with a single script.
+## Before you begin
 
-## Prerequisites
+If this is your first lab, set up [your tools](../getting-started/tools.md) and [your repo](../getting-started/repo-structure.md) first. This lab continues directly from Labs 2.5 and 4.3.
 
-- Lab 2.5 vault deployed and live. You have its bucket name handy.
-- Lab 4.3 pipeline working. Workflow runs on every PR.
-- Cosign installed locally for verification (`cosign version` reports `>= 2.0`).
+You need:
 
-## Estimated time & cost
+- **Cosign** installed locally for verification (`cosign version` reports `>= 2.0`). Official install: https://docs.sigstore.dev/cosign/system_config/installation/
+- Your Lab 4.3 workflow (`grc-gate.yml`) committed and working.
+- The Lab 2.5 vault. On a fresh day it was destroyed, so redeploy it in Step 0 below.
 
-- 60 minutes.
-- Free. Sigstore is free. Marginal S3 cost.
+> Commands below use `--profile default`. If you named your AWS CLI profile something else in Lab 2.3, replace `default` with that name.
+
+> **Hashing tools differ by OS.** macOS ships `shasum -a 256`; Git Bash and Ubuntu (including GitHub Actions runners) ship `sha256sum`. The workflow and verify script below detect whichever is available, the same way Lab 2.5's `capture-evidence.sh` does.
+
+## Time and cost
+
+- Time: about 60 minutes.
+- Cost: free. Sigstore is free; the S3 storage is fractions of a cent.
+
+## Chain of custody, in four properties
+
+Hold these four words in your head, because everything in this lab maps to one of them:
+
+- **Authenticity:** the evidence came from who it claims to (a specific repo's workflow).
+- **Integrity:** the evidence hasn't changed since it was produced.
+- **Timeliness:** there's a trustworthy record of *when* it was produced.
+- **Preservation:** it's still there, protected, when someone comes looking.
+
+Lab 2.5 gave you preservation (Object Lock). This lab adds authenticity, integrity, and timeliness through signing. Miss any one and you have a story, not a chain.
+
+## How keyless signing works (plain language)
+
+Normally signing means managing private keys, which is its own security headache. Sigstore's "keyless" approach skips that. When your workflow signs the evidence, it proves its identity using the same GitHub OIDC token from Lab 4.3. Sigstore's certificate authority (Fulcio) issues a short-lived certificate tied to that identity, and Sigstore's public transparency log (Rekor) records the signature with a timestamp. There's no private key to store or leak. The signature is bound to "this repository's workflow, at this moment," and that binding lives in Sigstore's infrastructure, not in your AWS account, so even an admin on your AWS account can't forge it.
 
 ## Architecture
 
 ```
-  PR opens
+  PR run (Lab 4.3)
+     │  produces evidence files
+     ▼
+  bundle into one tar.gz  ─▶  hash it (SHA-256)
      │
      ▼
-  workflow run  ─┬─▶  plan / policy / scan          (Lab 4.3)
-                 │
-                 ▼
-                 bundle evidence files into tar.gz
-                 │
-                 ▼
-                 cosign sign-blob --bundle (keyless via GitHub OIDC)
-                 │             │
-                 │             ▼
-                 │       Sigstore Fulcio CA issues short-lived cert
-                 │       Sigstore Rekor logs signature with timestamp
-                 ▼
-                 aws s3 cp bundle + .sha256 + .sig.bundle + receipt.json
-                                 to s3://VAULT/runs/<run_id>/
-                                 (Object Lock applies retention)
-                 │
-                 ▼
-   auditor:  scripts/verify-evidence.sh <run_id>
-             ├── recompute SHA-256 = expected         (integrity)
-             ├── cosign verify-blob --bundle          (authenticity, timestamp)
-             └── get-object-retention RetainUntilDate (preservation)
-             "CHAIN INTACT"
+  cosign sign-blob (keyless, via GitHub OIDC)
+     │   Fulcio issues a short-lived cert
+     │   Rekor logs the signature + timestamp
+     ▼
+  upload bundle + .sha256 + .sig.bundle + receipt.json
+     to s3://VAULT/runs/<run_id>/   (Object Lock applies retention)
+     │
+     ▼
+  auditor runs verify-evidence.sh <run_id>:
+     ├── recompute SHA-256 matches          → integrity
+     ├── cosign verify-blob succeeds         → authenticity + timeliness
+     └── retention not expired               → preservation
+     → "CHAIN INTACT"
+```
+
+## Where these files live
+
+```
+cgep-labs/
+├── .github/workflows/
+│   └── grc-gate.yml              ← edit: add Cosign + sign/upload + enforce-gate
+├── scripts/
+│   └── verify-evidence.sh        ← new in this lab
+└── evidence/lab-4-4/
+    └── receipt.json              ← filled in after a signed run
+```
+
+You already have `grc-gate.yml` from Lab 4.3 and the vault from Lab 2.5. This lab adds the verify script and extends the workflow.
+
+### Scaffold this lab's empty files
+
+Run this once from the repo root (`cgep-labs`). It creates the new paths; the workflow file should already exist from Lab 4.3.
+
+```bash
+# from the repo root
+mkdir -p scripts evidence/lab-4-4 .github/workflows
+
+touch scripts/verify-evidence.sh
+chmod +x scripts/verify-evidence.sh
+
+# Confirm the workflow you will edit is present
+ls -la .github/workflows/grc-gate.yml scripts/verify-evidence.sh evidence/lab-4-4
 ```
 
 ## Step-by-step walkthrough
 
-### Concept: Why signing matters
+### Step 0: Redeploy the vault
 
-Lab 2.5 made the bundle immutable. Object Lock prevents deletion, but it doesn't prove who created the bundle or when. A determined insider with admin in the AWS account can stand up a *different* bucket, drop a tampered bundle, and point a sloppy auditor at it. Cosign closes that loop. The signature ties the bundle to a specific GitHub Actions run on a specific repository at a specific moment. The certificate Sigstore issues includes the OIDC subject (`repo:GRCEngClub/cgep-app-starter:ref:refs/pull/...`). The Rekor transparency log timestamps it. None of that is bypassable by anyone with admin in your AWS account, because none of it lives in your AWS account.
+On a fresh day your Lab 2.5 vault is gone, so stand it back up and record its name:
 
-Three ways the chain breaks: mutable storage (Lab 2.5 fixed that), no signing (this lab), short retention (Lab 2.5 default-retention fixed that). Close all three or you have a story, not a chain.
+```bash
+# from the repo root
+cd terraform/primitives/evidence-vault
+eval "$(aws configure export-credentials --profile default --format env)"
+terraform init && terraform apply -auto-approve
+VAULT=$(terraform output -raw vault_name)
+cd ../../..
+gh variable set EVIDENCE_VAULT --body "$VAULT" --repo <your-github-org>/cgep-labs
+```
 
-### Step 1 Add Cosign to the workflow
+### Step 1: Add signing to the workflow
 
-Two new steps in `.github/workflows/grc-gate.yml`. After the existing scan and plan steps:
+Two additions to **`.github/workflows/grc-gate.yml`** (the file from Lab 4.3 — open that existing file, don't create a second one). First, install Cosign (add it alongside the other tool-install steps):
 
 ```yaml
 - name: Install Cosign
@@ -68,7 +118,7 @@ Two new steps in `.github/workflows/grc-gate.yml`. After the existing scan and p
     cosign-release: 'v2.2.4'
 ```
 
-Then, after `Copy plan into evidence`, the bundle/sign/upload step:
+Then, after the `Copy plan into evidence` step, add the bundle/sign/upload step:
 
 ```yaml
 - name: Bundle + sign + upload to vault
@@ -80,9 +130,13 @@ Then, after `Copy plan into evidence`, the bundle/sign/upload step:
     SHA: ${{ github.sha }}
   run: |
     set -euo pipefail
+    if command -v sha256sum >/dev/null 2>&1; then SHASUM="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then SHASUM="shasum -a 256"
+    else echo "Need sha256sum or shasum" >&2; exit 2; fi
+
     BUNDLE="evidence-${RUN_ID}-${SHA}.tar.gz"
-    ( cd evidence && tar czf "../${BUNDLE}" . )
-    shasum -a 256 "${BUNDLE}" | awk '{print $1}' > "${BUNDLE}.sha256"
+    ( cd evidence/lab-4-3 && tar czf "../../${BUNDLE}" . )
+    $SHASUM "${BUNDLE}" | awk '{print $1}' > "${BUNDLE}.sha256"
 
     cosign sign-blob --yes --bundle "${BUNDLE}.sig.bundle" "${BUNDLE}"
 
@@ -103,19 +157,44 @@ Then, after `Copy plan into evidence`, the bundle/sign/upload step:
     }
     EOF
     aws s3 cp receipt.json "s3://${VAULT}/${KEY_PREFIX}/receipt.json"
+    mkdir -p evidence/lab-4-4
+    cp receipt.json evidence/lab-4-4/receipt.json
 ```
 
-The `--bundle evidence.sig.bundle` flag packs the signature, the certificate Sigstore Fulcio issued, and the Rekor entry into one file. That file is what your verify script consumes.
+The `--bundle` flag packs the signature, Fulcio's certificate, and the Rekor log reference into one file. That single file is everything your verify script needs.
 
-> **Important**: in Lab 4.3 the policy gate exited the job on failure. Here we want to sign and store the evidence even when the gate fails, so the evidence trail is preserved. Move the pass/fail decision to the *last* step in the job. Lab 4.4's reference workflow does this.
+Also widen the existing upload-artifact step so the Lab 4.4 receipt is retained with the rest of the run evidence:
 
-### Step 2 Grant the role write to the vault
+```yaml
+- name: Upload evidence artifact
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: grc-evidence-${{ github.run_id }}
+    path: |
+      evidence/lab-4-3/
+      evidence/lab-4-4/
+    retention-days: 90
+```
 
-The Lab 4.3 OIDC role had `ReadOnlyAccess`. Grant a tight write inline policy on the vault:
+> **Sign even when the gate fails.** In Lab 4.3 the policy check could end the job before this step runs, which would mean a failed run leaves no signed evidence, exactly the runs you most want a record of. The fix is ordering: let the earlier gate steps *record* pass or fail without ending the job (they already use `if: always()` on the steps that follow), do the sign-and-upload, and put the actual build-failing decision in a final step:
+
+```yaml
+- name: Enforce gate
+  if: always()
+  run: |
+    test "${{ steps.conftest.outcome }}" = "success" \
+      && test "${{ steps.tfsec.outcome }}" = "success"
+```
+
+Now a violating PR still produces a signed, stored evidence bundle, and *then* the build goes red.
+
+### Step 2: Let the role write to the vault
+
+The Lab 4.3 role was read-only. Grant it a tight write scope on the vault and nothing else:
 
 ```bash
-eval "$(aws configure export-credentials --profile <your-sandbox> --format env)"
-VAULT=<your-vault-bucket>
+eval "$(aws configure export-credentials --profile default --format env)"
 aws iam put-role-policy \
   --role-name cgep-grc-gate \
   --policy-name vault-write \
@@ -130,12 +209,13 @@ aws iam put-role-policy \
 }
 EOF
 )"
-gh variable set EVIDENCE_VAULT --body "$VAULT" --repo OWNER/REPO
 ```
 
-Two scopes only: the vault and its objects. Nothing else.
+Two resources only: the vault and its objects. A role that can write evidence shouldn't be able to write anything else.
 
-### Step 3 The verify script
+### Step 3: The verify script
+
+This is the script an auditor runs. Three checks, three ways to fail, one line of success. Open **`scripts/verify-evidence.sh`** from the scaffold and paste:
 
 ```bash
 #!/usr/bin/env bash
@@ -149,9 +229,14 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --vault)   VAULT="$2"; shift 2 ;;
     --profile) PROFILE_ARG="--profile $2"; shift 2 ;;
+    *) echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 [[ -z "$VAULT" ]] && { echo "Set --vault or EVIDENCE_VAULT"; exit 2; }
+
+if command -v sha256sum >/dev/null 2>&1; then SHASUM="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then SHASUM="shasum -a 256"
+else echo "Need sha256sum or shasum" >&2; exit 2; fi
 
 WORK=$(mktemp -d); trap 'rm -rf "$WORK"' EXIT; cd "$WORK"
 PREFIX="runs/${RUN_ID}"
@@ -163,7 +248,7 @@ BUNDLE=$(ls evidence-*.tar.gz | head -1)
 
 # 1. Integrity
 EXPECTED=$(cat "${BUNDLE}.sha256")
-ACTUAL=$(shasum -a 256 "${BUNDLE}" | awk '{print $1}')
+ACTUAL=$($SHASUM "${BUNDLE}" | awk '{print $1}')
 [[ "$EXPECTED" == "$ACTUAL" ]] || { echo "FAIL: SHA mismatch"; exit 1; }
 
 # 2. Authenticity + timestamp
@@ -183,75 +268,90 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "CHAIN INTACT for run ${RUN_ID}"
 ```
 
-Three checks, three exits if any fail. The output you want to see at the end is one line: `CHAIN INTACT`.
+Each check maps to one of the four properties: the SHA comparison is integrity, `cosign verify-blob` is authenticity and timeliness together, and the retention check is preservation. If all three pass, the script prints `CHAIN INTACT`. If any fails, it exits non-zero with the reason.
 
-### Step 4 Trigger a fresh PR
+### Step 4: Run a fresh PR and verify it
 
-Push the workflow update. The next PR run produces signed bundles. From your laptop:
+Commit the workflow changes, push, open a PR. The run produces signed bundles. Grab the run ID from the Actions tab (or `gh run list --limit 1`), then verify from your laptop without hand-copying vault paths:
 
 ```bash
-EVIDENCE_VAULT=<your-vault> bash scripts/verify-evidence.sh <run_id> --profile <your-sandbox>
+RUN_ID=$(gh run list --workflow=grc-gate.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+EVIDENCE_VAULT="$VAULT" bash scripts/verify-evidence.sh "$RUN_ID" --profile default
 ```
 
-Reference run: bundle 18.8 KB, three files (`evidence-RUN_ID-SHA.tar.gz`, `.sha256`, `.sig.bundle`) plus `receipt.json`. Verify output:
+You're looking for, at the very end:
 
 ```
-=== 1. Integrity (SHA-256) ===
-  OK (dd8a473f8c1dcd969e220296f180f8069d12564fa92ae9c488c40e2387e6adee)
-=== 2. Authenticity + timestamp (Cosign + Sigstore Rekor) ===
 Verified OK
-  OK (Cosign verified, Rekor entry exists)
-=== 3. Preservation (Object Lock retention) ===
-  OK (retain until 2026-04-27T18:30:33.696000+00:00)
-
-CHAIN INTACT for run 24963918994
+...
+CHAIN INTACT for run <run-id>
 ```
 
-### Step 5 The tamper test
+`Verified OK` is Cosign confirming the signature matches the bundle and the Rekor entry exists. `CHAIN INTACT` is your script confirming all three checks passed.
 
-Download the bundle. Modify a single byte. Re-run `verify-evidence.sh`. The integrity step fails immediately. The signature, computed over the original bytes, now disagrees with the modified file's SHA. That failure is the lesson: chain of custody is mathematical, not aspirational.
+Pull a local copy of the receipt into your repo (the workflow also writes `evidence/lab-4-4/receipt.json` into the Actions artifact, but committing it from your laptop is what lands it in GitHub):
 
 ```bash
-aws s3 cp "s3://${VAULT}/runs/${RUN_ID}/evidence-${RUN_ID}-${SHA}.tar.gz" /tmp/bundle.tar.gz --profile <your-sandbox>
-echo "junk" >> /tmp/bundle.tar.gz
-shasum -a 256 /tmp/bundle.tar.gz
-# value differs from the .sha256 sidecar; verify-evidence.sh exits 1
+mkdir -p evidence/lab-4-4
+aws s3 cp "s3://${VAULT}/runs/${RUN_ID}/receipt.json" evidence/lab-4-4/receipt.json \
+  --profile default
 ```
 
-You can't write the tampered file *back* to the vault without changing the key. Object Lock blocks overwrite of the existing key. So the only place a tampered bundle lives is your laptop. The vault stays clean. The chain stays intact.
+### Step 5: The tamper test
+
+This is the demonstration the whole lab builds toward, so do it and watch it fail. Download the bundle using the receipt (or list the prefix), change a single byte, and re-hash:
+
+```bash
+# reuse RUN_ID and VAULT from above
+BUNDLE_KEY=$(aws s3api list-objects-v2 --bucket "$VAULT" --prefix "runs/${RUN_ID}/" \
+  --query "Contents[?ends_with(Key, '.tar.gz')].Key | [0]" --output text --profile default)
+
+aws s3 cp "s3://${VAULT}/${BUNDLE_KEY}" /tmp/bundle.tar.gz --profile default
+echo "junk" >> /tmp/bundle.tar.gz
+if command -v sha256sum >/dev/null 2>&1; then sha256sum /tmp/bundle.tar.gz
+else shasum -a 256 /tmp/bundle.tar.gz; fi
+# the value now differs from the .sha256 sidecar; verification fails
+```
+
+The hash no longer matches, and the signature, computed over the original bytes, disagrees with the altered file. Verification fails instantly. That's the point of the entire chapter in one command: chain of custody here is mathematical, not a matter of anyone's good word.
+
+And notice what you *can't* do: you can't write the tampered bundle back over the original in the vault, because Object Lock refuses to overwrite the existing key. The only place a tampered copy can exist is your laptop. The vault stays clean, and the chain stays intact.
+
+## Commit your work
+
+```bash
+# from the repo root
+git add .github/workflows/grc-gate.yml scripts/verify-evidence.sh evidence/lab-4-4
+git commit -m "Lab 4.4: Cosign signing + chain-of-custody verification"
+git push
+```
 
 ## Verification
 
-- The vault contains a `bundle.tar.gz`, `bundle.tar.gz.sha256`, `bundle.tar.gz.sig.bundle`, and `receipt.json` for at least one run.
-- `verify-evidence.sh <run_id>` returns 0 with `CHAIN INTACT`.
-- Tampering the bundle and re-running returns non-zero with the specific failure (integrity).
+- The vault holds a bundle, its `.sha256`, its `.sig.bundle`, and a `receipt.json` for at least one run.
+- `verify-evidence.sh <run_id>` exits 0 with `CHAIN INTACT`.
+- Tampering with the bundle and re-running exits non-zero on the integrity check.
 
 ## Portfolio submission checklist
 
-- [ ] `.github/workflows/grc-gate.yml` updated with the Cosign install + bundle/sign/upload step.
+- [ ] `grc-gate.yml` has the Cosign install, the bundle/sign/upload step, and the final enforce-gate step.
 - [ ] `scripts/verify-evidence.sh` committed and executable.
-- [ ] At least one run's full bundle visible in the vault.
-- [ ] `WRITEUP.md` section mapping each chain property (authenticity, integrity, timeliness, preservation) to the artifact that proves it.
-
-## Troubleshooting
-
-- **`cosign sign-blob: failed to get OIDC token`** in CI. The job needs `permissions: id-token: write`. Without it the action can't mint the OIDC token Sigstore needs to issue a cert.
-- **`cosign verify-blob`** fails with cert-identity mismatch. The default `--certificate-identity-regexp '.*'` is permissive (any cert from the OIDC issuer). For stricter verification, replace with the exact subject pattern, e.g. `^https://github.com/GRCEngClub/cgep-app-starter/.github/workflows/grc-gate.yml@refs/heads/main$`.
-- **Rekor propagation race.** The Sigstore Rekor public log can lag the signing call by ~1 second. If you call verify within milliseconds of signing, the log entry isn't there yet. CI naturally waits, this is a laptop-only race.
-- **Object Lock rejects overwrite.** The bundle key includes `runs/<run_id>` so each run lands at a unique key. If you re-run a job and the `RUN_ID` is reused for some reason, you'll get a 403 on the second `s3 cp`. Trigger a fresh run instead.
-- **`shasum: command not found`.** Linux ships `sha256sum`, macOS ships `shasum -a 256`. The reference script uses `shasum -a 256`. Swap to `sha256sum` on Linux runners if you adapt this for non-GitHub CI.
+- [ ] At least one run's full signed bundle visible in the vault.
+- [ ] `evidence/lab-4-4/receipt.json` committed (copied from the signing step).
+- [ ] A `WRITEUP.md` section mapping each of the four chain properties to the artifact that proves it.
 
 ## Cleanup
 
-Don't clean the vault. The whole point of a 365-day-retention vault is that the evidence outlives the PR that produced it. For lab purposes (Lab 2.5 deployed it in GOVERNANCE 1-day mode), the bundles will become deletable in 24 hours. Production: COMPLIANCE mode, longer retention, no clean.
+Don't clean the vault on purpose; the point of retention is that evidence outlives the PR that made it. Because Lab 2.5 deployed the vault in GOVERNANCE mode with 1-day retention, the lab bundles become deletable after 24 hours on their own, and you can then `terraform destroy` the vault. In production you'd use COMPLIANCE mode and a long retention, and you would never clean it.
+
+## Troubleshooting
+
+- **`cosign sign-blob: failed to get OIDC token` in CI.** The job needs `permissions: id-token: write`. Without it Sigstore can't issue a certificate.
+- **`cosign verify-blob` fails on certificate identity.** The script uses a permissive `--certificate-identity-regexp '.*'`. For stricter checks, replace it with the exact workflow subject, for example `^https://github.com/OWNER/REPO/.github/workflows/grc-gate.yml@refs/heads/main$`.
+- **Rekor lag.** The public transparency log can trail the signing call by about a second. Verifying microseconds after signing can miss the entry. CI naturally waits; this only bites on a laptop loop.
+- **403 on the second upload.** Object Lock blocks overwriting an existing key. Each run lands under a unique `runs/<run_id>` prefix, so a fresh run avoids this; don't reuse a run ID.
+- **`Need sha256sum or shasum`.** Neither hashing tool is on your PATH. Git Bash and Ubuntu include `sha256sum`; macOS includes `shasum`. Confirm with `command -v sha256sum` or `command -v shasum`.
 
 ## How this feeds the capstone
 
-Every PR in your capstone repo now leaves behind a signed, timestamped, immutably-stored record of what was tested and what happened. An assessor who never meets you can reconstruct the chain in minutes:
-
-1. Read your OSCAL component (Lab 6.1).
-2. Follow the evidence URI to a specific object in the vault.
-3. Run `verify-evidence.sh` against the run ID.
-4. See `CHAIN INTACT`.
-
-That is the engineered assurance the capstone is asking you to demonstrate. You just shipped it.
+Every PR in your capstone repo now leaves a signed, timestamped, immutably-stored record of what was tested and what happened. An assessor who never speaks to you can reconstruct the whole chain: read your OSCAL component (Chapter 6), follow its evidence link to a vault object, run `verify-evidence.sh` against the run ID, and see `CHAIN INTACT`. That is the engineered assurance the capstone asks you to demonstrate, and you've now built every piece of it.
