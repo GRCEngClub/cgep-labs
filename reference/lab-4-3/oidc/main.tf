@@ -13,13 +13,11 @@ provider "aws" {
 }
 
 variable "github_org" {
-  type    = string
-  default = "GRCEngClub"
+  type = string
 }
 
 variable "github_repo" {
-  type    = string
-  default = "cgep-app-starter"
+  type = string
 }
 
 # GitHub OIDC provider in this account (one per account).
