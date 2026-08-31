@@ -87,6 +87,39 @@ ls
 
 The service files below reference a provider, a random suffix, and your account ID. Open **`terraform/baselines/aws/main.tf`** and **`terraform/baselines/aws/variables.tf`** first (the original lab assumed these; they're spelled out here so the baseline applies cleanly).
 
+The CloudTrail snippet below references `random_id.suffix.hex`, `var.aws_region`, and `data.aws_caller_identity.current.account_id`. Wire those (and the provider) up first:
+
+```hcl
+# terraform/main.tf
+terraform {
+  required_version = ">= 1.6"
+  required_providers {
+    aws    = { source = "hashicorp/aws", version = "~> 5.0" }
+    random = { source = "hashicorp/random", version = "~> 3.6" }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+data "aws_caller_identity" "current" {}
+
+resource "random_id" "suffix" {
+  byte_length = 4
+}
+```
+
+```hcl
+# terraform/variables.tf
+variable "aws_region" {
+  type    = string
+  default = "us-east-1"
+}
+```
+
+Then the CloudTrail resources:
+
 ```hcl
 # terraform/baselines/aws/main.tf
 terraform {
