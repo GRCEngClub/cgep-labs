@@ -53,30 +53,28 @@ cgep-labs/
 
 ### Scaffold this lab's empty files
 
-Run this once from the repo root (`cgep-labs`). It creates every path in the diagram above as an empty file so the later steps are "open and paste," not "guess where this goes."
+Run this once from the repo root (`cgep-labs`). It creates the script and evidence paths from the diagram above so the later steps are "open and paste," not "guess where this goes."
+
+Do **not** pre-create the three `*_aws.rego` files. An empty `.rego` file is a parse error, and it would break the Step 1 health check on the Lab 3.3 library. You create each AWS policy file in Steps 4 to 6 when you paste it.
 
 ```bash
 # from the repo root
 mkdir -p policies scripts evidence/lab-3-4
 
-touch \
-  policies/sc28_encryption_aws.rego \
-  policies/ac3_no_public_aws.rego \
-  policies/cm6_required_tags_aws.rego \
-  scripts/policy-gate.sh
+touch scripts/policy-gate.sh
 
 # README may already exist from Lab 3.3; create it only if missing
 touch policies/README.md
 chmod +x scripts/policy-gate.sh
 
-find policies/*_aws.rego scripts/policy-gate.sh evidence/lab-3-4 | sort
+find scripts/policy-gate.sh evidence/lab-3-4 | sort
 ```
 
 ## Step-by-step walkthrough
 
 ### Step 1: Confirm the 3.3 library still passes
 
-Before extending the library, make sure it's healthy:
+Before extending the library, make sure it's healthy. This check covers only the three GCP policies and their tests from Lab 3.3; the AWS files don't exist yet, and they shouldn't.
 
 ```bash
 # from the repo root
@@ -116,7 +114,7 @@ This is the lesson. The control ID `SC-28` is portable; the rule `resource.type 
 
 ### Step 4: AWS variant of SC-28
 
-Open **`policies/sc28_encryption_aws.rego`** from the scaffold and paste:
+Create **`policies/sc28_encryption_aws.rego`** and paste:
 
 ```rego
 # policies/sc28_encryption_aws.rego
@@ -163,7 +161,7 @@ references_bucket(ref, bucket_addr) if ref == sprintf("%s.bucket", [bucket_addr]
 
 ### Step 5: AWS variant of AC-3
 
-This one is stricter than the GCP version: it requires the public-access-block resource to exist *and* all four of its flags to be `true`. Open **`policies/ac3_no_public_aws.rego`** and paste:
+This one is stricter than the GCP version: it requires the public-access-block resource to exist *and* all four of its flags to be `true`. Create **`policies/ac3_no_public_aws.rego`** and paste:
 
 ```rego
 # policies/ac3_no_public_aws.rego
@@ -224,7 +222,7 @@ Notice this rule reads from *both* halves of the plan JSON. It uses `configurati
 
 ### Step 6: AWS variant of CM-6
 
-GCP used `labels`; AWS uses `tags`. With provider `default_tags` turned on (as in your Lab 2.3 code), the merged set lands in `tags_all`. Open **`policies/cm6_required_tags_aws.rego`** and paste:
+GCP used `labels`; AWS uses `tags`. With provider `default_tags` turned on (as in your Lab 2.3 code), the merged set lands in `tags_all`. Create **`policies/cm6_required_tags_aws.rego`** and paste:
 
 ```rego
 # policies/cm6_required_tags_aws.rego
@@ -287,7 +285,10 @@ The three `tag_keys` definitions handle three states: tags merged by `default_ta
 
 ### Step 7: Run the gate against the compliant plan
 
+Run this from the repo root (`cgep-labs`). The `policies` and plan paths below are relative to it, so Conftest finds nothing if you're still inside `terraform/primitives/compliant-s3`.
+
 ```bash
+# from the repo root
 for ns in compliance.sc28_aws compliance.ac3_aws compliance.cm6_aws ; do
   echo "=== $ns ==="
   conftest test --policy policies --namespace $ns terraform/primitives/compliant-s3/plan.json
@@ -311,10 +312,21 @@ Now your Lab 2.3 plan has real AWS coverage. These passes mean something, unlike
 
 Copy your Lab 2.3 code to a throwaway folder, remove the encryption resource, regenerate the plan, and run the gate. (Don't commit this folder; it exists only to prove the gate works.)
 
+The order matters: delete the resource **before** you regenerate the plan. If you plan first and delete second, the plan still contains the encryption resource and the gate passes, which proves nothing.
+
+First, copy the code:
+
 ```bash
 # from the repo root
 mkdir -p /tmp/broken && cp terraform/primitives/compliant-s3/*.tf /tmp/broken/
-# Edit /tmp/broken/main.tf: delete the aws_s3_bucket_server_side_encryption_configuration.primary resource
+```
+
+Now open `/tmp/broken/main.tf` in your editor and delete the whole `resource "aws_s3_bucket_server_side_encryption_configuration" "primary" { ... }` block. Save the file.
+
+Then regenerate the plan from the broken copy and run the gate:
+
+```bash
+# from the repo root
 ( cd /tmp/broken && terraform init \
     && terraform plan -out=tfplan -var="project_name=cgep-lab" -var="environment=dev" \
     && terraform show -json tfplan > plan.json )
