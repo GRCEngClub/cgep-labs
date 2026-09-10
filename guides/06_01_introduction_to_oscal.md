@@ -217,7 +217,7 @@ trestle validate -f profiles/cge-p-minimum/profile.json
 ### Step 6: Resolve the profile against the catalog
 
 ```bash
-trestle profile-resolve -n cge-p-minimum -o cge-p-minimum-resolved
+trestle author profile-resolve -n cge-p-minimum -o cge-p-minimum-resolved
 ```
 
 Trestle fetches the NIST catalog, applies your selection, and writes out a *resolved* profile: the flat list of controls you're responsible for, with their full text pulled in from the catalog. This is the artifact a System Security Plan would import. You've turned "I cover four controls" into a self-contained, machine-readable document.
@@ -238,7 +238,7 @@ When it prints `CHAIN INTACT`, you've just done what an assessor does: started f
 ## Verification
 
 - `trestle validate` returns `VALID` for both the component definition and the profile.
-- `trestle profile-resolve` produces a resolved profile.
+- `trestle author profile-resolve` produces a resolved profile.
 - At least one evidence URI in the component definition points at a real signed object in your vault.
 
 ## Capture and commit
