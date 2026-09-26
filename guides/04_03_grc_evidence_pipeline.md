@@ -112,7 +112,12 @@ resource "aws_iam_role" "grc_gate" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = { "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com" }
-        StringLike   = { "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:*" }
+        StringLike   = {
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_org}/${var.github_repo}:*",     # repos created before Jul 15 2026
+            "repo:${var.github_org}@*/${var.github_repo}@*:*", # repos created after: GitHub adds owner + repo IDs
+          ]
+        }
       }
     }]
   })
@@ -335,7 +340,11 @@ The file is committed. The history is preserved. In Chapter 6, the OSCAL compone
 ## Troubleshooting
 
 - **`Could not assume role with OIDC: invalid identity token`.** The `sub` condition doesn't match the run. For PR runs the subject is `repo:OWNER/REPO:pull_request`; the `StringLike` with `repo:OWNER/REPO:*` covers both PR and branch runs.
-- **`Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`.** GitHub minted the token fine; the role's trust policy rejected it. In practice this means the `sub` condition on `cgep-grc-gate` does not match the repo the workflow is running in. Print the trust policy and compare it to your repo URL:
+- **`Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`.** GitHub minted the token fine; the role's trust policy rejected it. In practice this means the `sub` condition on `cgep-grc-gate` does not match the repo the workflow is running in.
+
+  **First suspect: your repo was created after July 15, 2026.** GitHub changed the default `sub` claim for new repositories to `repo:OWNER@OWNER-ID/REPO@REPO-ID:...` ([immutable subject claims](https://docs.github.com/en/actions/reference/security/oidc#immutable-subject-claims)). A trust policy that only lists `repo:OWNER/REPO:*` can never match it. The module above lists both formats; if your `main.tf` has only the first one, add the second and `terraform apply`. Older repos keep the old format, which is why some members never see this.
+
+  If both formats are present, print the trust policy and compare it to your repo URL:
 
   ```bash
   aws iam get-role --role-name cgep-grc-gate --query Role.AssumeRolePolicyDocument
