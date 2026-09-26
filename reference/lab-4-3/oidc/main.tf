@@ -44,7 +44,10 @@ resource "aws_iam_role" "grc_gate" {
           "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
         }
         StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:*"
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:${var.github_org}/${var.github_repo}:*",     # repos created before Jul 15 2026
+            "repo:${var.github_org}@*/${var.github_repo}@*:*", # repos created after: GitHub adds owner + repo IDs
+          ]
         }
       }
     }]
