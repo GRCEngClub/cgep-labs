@@ -335,6 +335,20 @@ The file is committed. The history is preserved. In Chapter 6, the OSCAL compone
 ## Troubleshooting
 
 - **`Could not assume role with OIDC: invalid identity token`.** The `sub` condition doesn't match the run. For PR runs the subject is `repo:OWNER/REPO:pull_request`; the `StringLike` with `repo:OWNER/REPO:*` covers both PR and branch runs.
+- **`Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity`.** GitHub minted the token fine; the role's trust policy rejected it. In practice this means the `sub` condition on `cgep-grc-gate` does not match the repo the workflow is running in. Print the trust policy and compare it to your repo URL:
+
+  ```bash
+  aws iam get-role --role-name cgep-grc-gate --query Role.AssumeRolePolicyDocument
+  ```
+
+  The `sub` value must be exactly `repo:<Owner>/<Repo>:*`. Check, in order:
+  1. **Casing.** GitHub's `sub` claim uses the repo's exact capitalization and IAM `StringLike` is case-sensitive. `repo:tee/cgep-labs:*` will not match `Tee/cgep-labs`.
+  2. **Repo name.** The apply command above uses `github_repo=cgep-labs`. If you named your repo anything else, pass that name instead.
+  3. **Value shape.** No `https://github.com/` prefix, no `.git` suffix, and the org and repo go in separate variables.
+  4. **Account.** The account ID in `vars.AWS_ROLE_ARN` must be the account where you applied `terraform/primitives/oidc-trust/`.
+
+  Fix the variables, re-run `terraform apply`, and re-run the workflow.
+- **tfsec `command not found` or `plan.json: No such file or directory` after an OIDC failure.** These are not separate bugs. The tfsec and copy steps run `if: always()`, but the install and plan steps before them were skipped when the credentials step failed. Fix the OIDC error first and these disappear.
 - **`Permission denied` on terraform init.** The role needs read access to your state backend. `ReadOnlyAccess` covers a plan-only pipeline; a real apply pipeline needs a narrower, write-capable policy.
 - **Conftest finds no policies.** `--policy` is resolved from the step's working directory. The workflow above runs the gate from the repo root and passes `policies`, so don't add a `working-directory` to that step.
 - **OIDC fails even though the role exists.** Almost always the missing `id-token: write` permission. Check that block first.
