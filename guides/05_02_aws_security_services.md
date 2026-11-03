@@ -303,7 +303,7 @@ This JSON is exactly the kind of artifact your Lab 4.4 signing step uploads to t
 
 ## Verification
 
-- `aws cloudtrail get-trail-status` returns `"IsLogging": true`.
+- `aws cloudtrail get-trail-status --name "$TRAIL"` returns `"IsLogging": true` (the command needs `--name`; `$TRAIL` comes from `terraform output -raw trail_name` in Step 5).
 - `aws securityhub describe-hub` returns the hub ARN.
 - At least one finding appears within 30 minutes.
 - `evidence/lab-5-2/security-hub-findings.json` is captured and non-empty.
