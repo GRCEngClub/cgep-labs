@@ -321,7 +321,17 @@ First, copy the code:
 mkdir -p /tmp/broken && cp terraform/primitives/compliant-s3/*.tf /tmp/broken/
 ```
 
+> **Finding the temporary folder:** `/tmp/broken` is outside your repository. After creating it, open it using the instructions for your operating system:
+>
+> - **macOS:** Open Finder, press **Command + Shift + G**, enter `/tmp/broken`, and press **Return**.
+> - **Linux (GNOME Files):** Open Files, press **Ctrl + L**, enter `/tmp/broken`, and press **Enter**.
+> - **Windows (standard Git Bash setup):** Open File Explorer with **Windows + E**, press **Alt + D**, enter `%TEMP%\broken`, and press **Enter**. If that folder cannot be found, run `cygpath -w /tmp/broken` in Git Bash, then paste the resulting Windows path into File Explorer’s address bar.
+>
+> Open `main.tf` and `outputs.tf` from this temporary folder in your editor.
+
 Now open `/tmp/broken/main.tf` in your editor and delete the whole `resource "aws_s3_bucket_server_side_encryption_configuration" "primary" { ... }` block. Save the file.
+
+Also open `/tmp/broken/outputs.tf` and delete the entire `output "encryption_algorithm"` block. This output references the encryption resource you just removed. Leaving it in place causes `terraform plan` to fail with "Reference to undeclared resource", so the plan JSON cannot be generated. Make both edits only in the temporary copy under `/tmp/broken`.
 
 Then regenerate the plan from the broken copy and run the gate:
 
