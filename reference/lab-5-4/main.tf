@@ -10,17 +10,29 @@ terraform {
   }
 }
 
+# user_project_override + billing_project bill API calls to your project.
+# Without them the Org Policy API returns a 403 quota error.
 provider "google" {
-  project = var.gcp_project
+  project               = var.gcp_project
+  user_project_override = true
+  billing_project       = var.gcp_project
 }
 
 provider "google-beta" {
-  project = var.gcp_project
+  project               = var.gcp_project
+  user_project_override = true
+  billing_project       = var.gcp_project
 }
 
 variable "gcp_project" {
   type        = string
   description = "GCP project ID. Lab uses your own; set via terraform.tfvars or -var."
+}
+
+variable "enable_org_policy" {
+  type        = bool
+  default     = true
+  description = "Set to false when the project has no Organization above it."
 }
 
 variable "github_org" {
@@ -34,10 +46,13 @@ variable "github_repo" {
 }
 
 # ----- Org Policy at project scope -----------------------------------------
-# Project-scope policies work even when you don't have an Org. The same
-# resources work at folder/organization scope by changing parent.
+# Org Policy needs the project to sit under an Organization, and
+# roles/orgpolicy.policyAdmin is granted on the Organization. For a standalone
+# project, set enable_org_policy = false. The same resources work at
+# folder/organization scope by changing parent.
 
 resource "google_org_policy_policy" "uniform_bucket_access" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/storage.uniformBucketLevelAccess"
   parent = "projects/${var.gcp_project}"
 
@@ -49,6 +64,7 @@ resource "google_org_policy_policy" "uniform_bucket_access" {
 }
 
 resource "google_org_policy_policy" "disable_sa_keys" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/iam.disableServiceAccountKeyCreation"
   parent = "projects/${var.gcp_project}"
 
@@ -60,6 +76,7 @@ resource "google_org_policy_policy" "disable_sa_keys" {
 }
 
 resource "google_org_policy_policy" "require_oslogin" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/compute.requireOsLogin"
   parent = "projects/${var.gcp_project}"
 

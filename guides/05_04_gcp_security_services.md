@@ -11,11 +11,26 @@ If this is your first lab, set up [your tools](../getting-started/tools.md) and 
 You need:
 
 - A GCP project you own with billing on, and these APIs enabled: `cloudkms.googleapis.com`, `iam.googleapis.com`, `cloudresourcemanager.googleapis.com`, and `orgpolicy.googleapis.com`.
-- Roles: `roles/orgpolicy.policyAdmin`, `roles/iam.workloadIdentityPoolAdmin`, `roles/logging.admin` (a project owner can grant these at project scope).
+- Roles: `roles/iam.workloadIdentityPoolAdmin` and `roles/logging.admin` (a project owner can grant these at project scope), plus `roles/orgpolicy.policyAdmin`, which has to be granted on the Organization (see below).
+- For the Org Policy part (Step 1 and the enforcement test in Step 4): a project that sits under a GCP Organization. Read "Do you have an Organization?" below before you start.
 - `gcloud` authenticated both ways: `gcloud auth login` and `gcloud auth application-default login` (Terraform reads the second).
 - Terraform `>= 1.6`.
 
 Substitute your project ID for `your-gcp-project` and your GitHub repo (`<your-github-org>/cgep-labs`, or whichever repo will assume the WIF identity) wherever those placeholders appear. This lab is self-contained; it deploys its own baseline and depends on no earlier lab's live resources.
+
+### Do you have an Organization?
+
+Org Policy only works for projects that belong to a GCP Organization, and `roles/orgpolicy.policyAdmin` is granted on the Organization, not on the project. A project created under a personal Gmail account has no Organization above it, so the role never shows up in the project's IAM page and even `Owner` can't set a policy. Check which kind of project you have:
+
+```bash
+gcloud projects get-ancestors your-gcp-project
+gcloud organizations list
+```
+
+If the first command lists an `organization` row, you're set: have an org admin grant you `roles/orgpolicy.policyAdmin` on the Organization. If it lists only the `project` and the second command comes back empty, pick one of two paths:
+
+- **Skip Org Policy (fastest).** Add `-var="enable_org_policy=false"` to every `terraform apply` and `terraform destroy` in this lab. WIF and Data Access logs still deploy, and you still write the Org Policy code. In your README, record it as "preventive control designed in code, not applied: project has no Organization". Skip the key-creation test in Step 4 and the Org Policy lines in Verification.
+- **Create an Organization.** You need a domain you own and a free Cloud Identity account for it. Follow [Creating and managing organization resources](https://cloud.google.com/resource-manager/docs/creating-managing-organization), move your project under the new Organization, then grant yourself `roles/orgpolicy.policyAdmin` on the Organization. Budget an extra hour for domain verification.
 
 ## Time and cost
 
@@ -99,6 +114,11 @@ terraform {
 provider "google" {
   project = var.gcp_project
   region  = "us-central1"
+
+  # Bill API calls to your project. Without these two lines the Org Policy API
+  # is called against gcloud's shared project and returns a 403 quota error.
+  user_project_override = true
+  billing_project       = var.gcp_project
 }
 ```
 
@@ -109,6 +129,11 @@ variable "github_repo" {
   type        = string
   description = "OWNER/REPO that the WIF provider will trust."
 }
+variable "enable_org_policy" {
+  type        = bool
+  default     = true
+  description = "Set to false when the project has no Organization above it."
+}
 ```
 
 ### Step 1: Org Policy at project scope
@@ -118,6 +143,7 @@ Three constraints, each enforced (rejected) at the API. Open **`terraform/baseli
 ```hcl
 # terraform/baselines/gcp/org_policy.tf
 resource "google_org_policy_policy" "uniform_bucket_access" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/storage.uniformBucketLevelAccess"
   parent = "projects/${var.gcp_project}"
 
@@ -127,6 +153,7 @@ resource "google_org_policy_policy" "uniform_bucket_access" {
 }
 
 resource "google_org_policy_policy" "disable_sa_keys" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/iam.disableServiceAccountKeyCreation"
   parent = "projects/${var.gcp_project}"
 
@@ -136,6 +163,7 @@ resource "google_org_policy_policy" "disable_sa_keys" {
 }
 
 resource "google_org_policy_policy" "require_oslogin" {
+  count  = var.enable_org_policy ? 1 : 0
   name   = "projects/${var.gcp_project}/policies/compute.requireOsLogin"
   parent = "projects/${var.gcp_project}"
 
@@ -146,6 +174,8 @@ resource "google_org_policy_policy" "require_oslogin" {
 ```
 
 `enforce = "TRUE"` means rejection at the API. (If you wanted audit-only behavior without rejecting, you'd omit the rules block.)
+
+The `count` line is the switch from "Do you have an Organization?": with `enable_org_policy=false`, Terraform creates none of the three policies and the rest of the baseline still applies.
 
 ### Step 2: Workload Identity Federation
 
@@ -272,6 +302,8 @@ terraform apply -auto-approve \
 SA_EMAIL=$(terraform output -raw wif_service_account_email)
 ```
 
+No Organization? Add `-var="enable_org_policy=false"` to the apply and skip the key-creation test below. Without the policy the key would actually be created, and a downloaded key is exactly what this lab exists to avoid.
+
 Give Org Policy a few minutes to propagate, then deliberately try to create a key on the service account you just created:
 
 ```bash
@@ -306,12 +338,13 @@ If your project sits in an Organization with Security Command Center on, finding
 gcloud scc findings list ORG_ID --source=- --format=json > ../../../evidence/lab-5-4/scc-findings.json
 ```
 
-For a standalone project with no Org, SCC isn't available, and the Org Policy enforcements above are your equivalent preventive layer.
+For a standalone project with no Org, neither SCC nor Org Policy is available. WIF and the Data Access logs are the controls you can evidence from this lab.
 
 ## Verification
 
 ```bash
 # still inside terraform/baselines/gcp
+# (no Organization: skip this command and the key-creation check at the end)
 gcloud org-policies list --project=your-gcp-project | grep -E "uniformBucket|disableServiceAccount|requireOsLogin"
 
 gcloud iam workload-identity-pools list --location=global --project=your-gcp-project
@@ -369,6 +402,9 @@ Two things to know:
 - **`PERMISSION_DENIED` creating the WIF provider.** You need `roles/iam.workloadIdentityPoolAdmin`, which `Owner` alone doesn't include.
 - **WIF condition mismatch.** `assertion.repository` is the literal `OWNER/REPO`. Case, spelling, and the slash all matter. An opaque `PERMISSION_DENIED` from `auth@v2` usually means the condition doesn't match your repo.
 - **Data Access log cost.** A busy project can ingest gigabytes a day. Start with `storage.googleapis.com` only before enabling KMS and IAM.
+- **403 naming a project you don't recognize (`consumer "projects/764086051850"`).** The Org Policy API call is being billed to gcloud's shared project. Add `user_project_override = true` and `billing_project = var.gcp_project` to the provider block, then run `gcloud auth application-default set-quota-project your-gcp-project`.
+- **Can't find `roles/orgpolicy.policyAdmin`, or `PERMISSION_DENIED` on the org policies.** Your project has no Organization above it. See "Do you have an Organization?" at the top of this lab.
+- **Pasted HCL fails with an invalid character error.** Chat apps turn straight quotes into curly ones. Retype the quotes as plain `"`.
 - **`policySpec is not supported`.** Enable the v2 Org Policy API: `gcloud services enable orgpolicy.googleapis.com`.
 
 ## How this feeds the capstone
